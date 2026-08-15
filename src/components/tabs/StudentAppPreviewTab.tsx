@@ -19,7 +19,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
-import { Exam, Question } from "../../types";
+import { Exam, Question, SubscriptionPackage } from "../../types";
 
 interface StudentAppPreviewTabProps {
   initialExam?: Exam | null;
@@ -32,10 +32,14 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
     subjects,
     courses,
     jobCirculars,
-    subscriptionPackages,
+    subscriptionPackages = [],
     submitPayment,
     showToast,
   } = useAdminData();
+
+  const packages = subscriptionPackages.length > 0 
+    ? subscriptionPackages 
+    : appSettings?.subscription_packages || [];
 
   const [activeMobileTab, setActiveMobileTab] = useState<"home" | "exams" | "courses" | "premium">("home");
   const [activeBannerIdx, setActiveBannerIdx] = useState(0);
@@ -52,9 +56,15 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
   const [paymentPhone, setPaymentPhone] = useState("01712345678");
   const [paymentGateway, setPaymentGateway] = useState<"bKash" | "Nagad" | "Rocket">("bKash");
   const [paymentTrxId, setPaymentTrxId] = useState("");
-  const [paymentPlan, setPaymentPlan] = useState(subscriptionPackages[0]);
+  const [paymentPlan, setPaymentPlan] = useState<SubscriptionPackage | null>(packages[0] || null);
 
-  const activeBanners = appSettings.home_banners.filter((b) => b.is_active);
+  useEffect(() => {
+    if (!paymentPlan && packages.length > 0) {
+      setPaymentPlan(packages[0]);
+    }
+  }, [packages, paymentPlan]);
+
+  const activeBanners = appSettings?.home_banners?.filter((b) => b.is_active) || [];
 
   useEffect(() => {
     if (initialExam) {
@@ -115,6 +125,12 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
       return;
     }
 
+    const plan = paymentPlan || packages[0];
+    if (!plan) {
+      showToast("প্যাকেজ পাওয়া যায়নি।", "error");
+      return;
+    }
+
     submitPayment({
       user_id: "usr-preview",
       user_name: paymentName,
@@ -122,9 +138,9 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
       sender_number: paymentPhone,
       gateway: paymentGateway,
       trx_id: paymentTrxId.toUpperCase(),
-      amount: paymentPlan.price,
-      plan_id: paymentPlan.id,
-      plan_name: paymentPlan.name_bn,
+      amount: plan.price,
+      plan_id: plan.id,
+      plan_name: plan.name_bn,
       screenshot_url: "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=400",
     });
 
@@ -455,11 +471,14 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
                   <div>
                     <label className="font-bold text-slate-700 block mb-0.5 text-[11px]">প্যাকেজ নির্বাচন</label>
                     <select
-                      value={paymentPlan.id}
-                      onChange={(e) => setPaymentPlan(subscriptionPackages.find((p) => p.id === e.target.value)!)}
-                      className="w-full p-2 rounded-lg border border-slate-200 text-xs font-bold"
+                      value={paymentPlan?.id || packages[0]?.id || ""}
+                      onChange={(e) => {
+                        const found = packages.find((p) => p.id === e.target.value);
+                        if (found) setPaymentPlan(found);
+                      }}
+                      className="w-full p-2 rounded-lg border border-slate-200 text-xs font-bold bg-white text-slate-800"
                     >
-                      {subscriptionPackages.map((p) => (
+                      {packages.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.name_bn} (৳{p.price})
                         </option>
@@ -475,8 +494,8 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
                           key={gw}
                           type="button"
                           onClick={() => setPaymentGateway(gw)}
-                          className={`py-1.5 text-[11px] rounded-lg font-bold border ${
-                            paymentGateway === gw ? "bg-emerald-600 text-white border-emerald-600" : "bg-slate-50 border-slate-200"
+                          className={`py-1.5 text-[11px] rounded-lg font-bold border cursor-pointer ${
+                            paymentGateway === gw ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                           }`}
                         >
                           {gw}
@@ -492,16 +511,16 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
                       value={paymentTrxId}
                       onChange={(e) => setPaymentTrxId(e.target.value)}
                       placeholder="যেমন: 9B7X4K2L"
-                      className="w-full p-2 rounded-lg border border-slate-200 text-xs font-mono font-bold uppercase"
+                      className="w-full p-2 rounded-lg border border-slate-200 text-xs font-mono font-bold uppercase bg-white text-slate-900"
                       required
                     />
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs mt-2"
+                    className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs mt-2 cursor-pointer shadow-md transition-colors"
                   >
-                    পেমেন্ট ভেরিফিকেশন পাঠান (৳{paymentPlan.price})
+                    পেমেন্ট ভেরিফিকেশন পাঠান {paymentPlan ? `(৳${paymentPlan.price})` : packages[0] ? `(৳${packages[0].price})` : ""}
                   </button>
                 </form>
               </div>

@@ -89,6 +89,19 @@ interface AdminDataContextType {
   toggleJobActive: (id: string) => void;
 
   // Payments & Subscription Management
+  subscriptionPackages: SubscriptionPackage[];
+  submitPayment: (p: {
+    user_id: string;
+    user_name: string;
+    user_phone: string;
+    sender_number: string;
+    gateway: "bKash" | "Nagad" | "Rocket";
+    trx_id: string;
+    amount: number;
+    plan_id: string;
+    plan_name: string;
+    screenshot_url?: string;
+  }) => PaymentTransaction;
   approvePayment: (paymentId: string, adminNote?: string) => void;
   rejectPayment: (paymentId: string, adminNote?: string) => void;
   updateSubscriptionPackage: (pkgId: string, pkg: Partial<SubscriptionPackage>) => void;
@@ -389,6 +402,37 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // Payment Verification & User Activation
+  const submitPayment = (p: {
+    user_id: string;
+    user_name: string;
+    user_phone: string;
+    sender_number: string;
+    gateway: "bKash" | "Nagad" | "Rocket";
+    trx_id: string;
+    amount: number;
+    plan_id: string;
+    plan_name: string;
+    screenshot_url?: string;
+  }): PaymentTransaction => {
+    const newTx: PaymentTransaction = {
+      id: `trx-${Date.now()}`,
+      user_id: p.user_id,
+      user_name: p.user_name,
+      user_phone: p.user_phone,
+      sender_number: p.sender_number,
+      gateway: p.gateway,
+      trx_id: p.trx_id,
+      amount: p.amount,
+      plan_id: p.plan_id as any,
+      plan_name: p.plan_name,
+      screenshot_url: p.screenshot_url,
+      status: "pending",
+      created_at: new Date().toISOString(),
+    };
+    setPayments((prev) => [newTx, ...prev]);
+    return newTx;
+  };
+
   const approvePayment = (paymentId: string, adminNote?: string) => {
     const payment = payments.find((p) => p.id === paymentId);
     if (!payment) return;
@@ -628,6 +672,8 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteJobCircular,
         toggleJobHot,
         toggleJobActive,
+        subscriptionPackages: appSettings.subscription_packages,
+        submitPayment,
         approvePayment,
         rejectPayment,
         updateSubscriptionPackage,
