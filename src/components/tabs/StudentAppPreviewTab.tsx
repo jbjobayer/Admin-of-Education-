@@ -134,9 +134,9 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
   };
 
   return (
-    <div className="flex flex-col lg:flex-row items-center justify-center gap-8 py-4">
+    <div className="flex flex-col lg:flex-row items-center justify-center gap-6 sm:gap-8 py-2 sm:py-4 w-full">
       {/* Phone Mockup Frame */}
-      <div className="w-[380px] h-[780px] bg-slate-900 rounded-[50px] p-4 shadow-2xl border-4 border-slate-700 relative flex flex-col flex-shrink-0">
+      <div className="w-full max-w-[380px] h-[680px] sm:h-[760px] bg-slate-900 rounded-[36px] sm:rounded-[50px] p-2.5 sm:p-4 shadow-2xl border-4 border-slate-700 relative flex flex-col flex-shrink-0">
         {/* Phone Notch & Speaker */}
         <div className="w-36 h-4 bg-slate-800 rounded-full mx-auto mb-2 flex items-center justify-center gap-2 flex-shrink-0">
           <div className="w-2.5 h-2.5 rounded-full bg-slate-950"></div>

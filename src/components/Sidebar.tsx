@@ -15,11 +15,20 @@ import {
   ShieldCheck,
   Sparkles,
   RefreshCw,
+  X,
 } from "lucide-react";
 import { useAdminData, AdminTab } from "../context/AdminDataContext";
 
 export const Sidebar: React.FC = () => {
-  const { activeTab, setActiveTab, payments, exams, resetAllData } = useAdminData();
+  const {
+    activeTab,
+    setActiveTab,
+    payments,
+    exams,
+    resetAllData,
+    isMobileDrawerOpen,
+    setIsMobileDrawerOpen,
+  } = useAdminData();
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const pendingPaymentsCount = payments.filter((p) => p.status === "pending").length;
@@ -101,16 +110,18 @@ export const Sidebar: React.FC = () => {
     },
   ];
 
-  return (
-    <aside
-      id="admin-sidebar"
-      className={`transition-all duration-300 ease-in-out flex flex-col flex-shrink-0 bg-emerald-950 text-slate-100 border-r border-emerald-900/60 z-30 ${
-        isCollapsed ? "w-20" : "w-72"
-      }`}
-    >
+  const handleSelectTab = (tabId: AdminTab) => {
+    setActiveTab(tabId);
+    if (isMobileDrawerOpen) {
+      setIsMobileDrawerOpen(false);
+    }
+  };
+
+  const navContent = (collapsed: boolean, isMobile: boolean = false) => (
+    <div className="flex flex-col h-full bg-emerald-950 text-slate-100">
       {/* Brand Header */}
-      <div className="h-18 flex items-center justify-between px-4 border-b border-emerald-900/50">
-        {!isCollapsed ? (
+      <div className="h-18 flex items-center justify-between px-4 border-b border-emerald-900/50 flex-shrink-0">
+        {!collapsed || isMobile ? (
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-amber-500 flex items-center justify-center text-white shadow-lg shadow-emerald-900/40 font-bold text-xl flex-shrink-0">
               ت
@@ -133,19 +144,29 @@ export const Sidebar: React.FC = () => {
           </div>
         )}
 
-        <button
-          id="sidebar-toggle-btn"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="p-1.5 rounded-lg hover:bg-emerald-900/80 text-emerald-400 hover:text-white transition-colors cursor-pointer"
-          title={isCollapsed ? "প্রসারিত করুন" : "সংকুচিত করুন"}
-        >
-          {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
-        </button>
+        {isMobile ? (
+          <button
+            onClick={() => setIsMobileDrawerOpen(false)}
+            className="p-2 rounded-xl bg-emerald-900/60 hover:bg-emerald-900 text-emerald-300 hover:text-white transition-colors cursor-pointer"
+            aria-label="Close drawer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        ) : (
+          <button
+            id="sidebar-toggle-btn"
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="p-1.5 rounded-lg hover:bg-emerald-900/80 text-emerald-400 hover:text-white transition-colors cursor-pointer"
+            title={isCollapsed ? "প্রসারিত করুন" : "সংকুচিত করুন"}
+          >
+            {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+          </button>
+        )}
       </div>
 
       {/* Navigation List */}
-      <div className="flex-1 overflow-y-auto py-4 px-3 space-y-1.5">
-        {!isCollapsed && (
+      <div className="flex-1 overflow-y-auto py-4 px-3 space-y-1.5 overscroll-contain">
+        {(!collapsed || isMobile) && (
           <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-emerald-400/60 font-mono">
             ম্যানেজমেন্ট ও কন্ট্রোল
           </div>
@@ -157,8 +178,8 @@ export const Sidebar: React.FC = () => {
             <button
               id={`nav-item-${item.id}`}
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 cursor-pointer group ${
+              onClick={() => handleSelectTab(item.id)}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all duration-200 cursor-pointer group min-h-[44px] ${
                 isActive
                   ? "bg-gradient-to-r from-emerald-600 to-emerald-700 text-white font-semibold shadow-md shadow-emerald-950/40"
                   : "text-emerald-100/80 hover:bg-emerald-900/60 hover:text-white"
@@ -173,7 +194,7 @@ export const Sidebar: React.FC = () => {
                 {item.icon}
               </div>
 
-              {!isCollapsed && (
+              {(!collapsed || isMobile) && (
                 <div className="flex-1 flex items-center justify-between truncate">
                   <div className="flex flex-col truncate">
                     <span className="text-sm truncate leading-snug">{item.labelBn}</span>
@@ -197,8 +218,8 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Footer System Status */}
-      <div className="p-3 border-t border-emerald-900/50 bg-emerald-950/60">
-        {!isCollapsed ? (
+      <div className="p-3 border-t border-emerald-900/50 bg-emerald-950/60 flex-shrink-0">
+        {!collapsed || isMobile ? (
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs text-emerald-300/80">
               <div className="flex items-center gap-2">
@@ -220,7 +241,7 @@ export const Sidebar: React.FC = () => {
                   resetAllData();
                 }
               }}
-              className="w-full text-[11px] flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-emerald-900/40 hover:bg-emerald-900 text-emerald-300 hover:text-white transition-colors cursor-pointer border border-emerald-800/40"
+              className="w-full text-[11px] flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-emerald-900/40 hover:bg-emerald-900 text-emerald-300 hover:text-white transition-colors cursor-pointer border border-emerald-800/40 min-h-[38px]"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>রিসেট ডেমো ডেটা</span>
@@ -232,6 +253,36 @@ export const Sidebar: React.FC = () => {
           </div>
         )}
       </div>
-    </aside>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop Sidebar (hidden on mobile) */}
+      <aside
+        id="admin-sidebar"
+        className={`hidden md:flex transition-all duration-300 ease-in-out flex-col flex-shrink-0 border-r border-emerald-900/60 z-30 h-screen ${
+          isCollapsed ? "w-20" : "w-72"
+        }`}
+      >
+        {navContent(isCollapsed, false)}
+      </aside>
+
+      {/* Mobile Drawer (Visible when isMobileDrawerOpen is true on < md) */}
+      {isMobileDrawerOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-300"
+            onClick={() => setIsMobileDrawerOpen(false)}
+          />
+
+          {/* Drawer Panel */}
+          <div className="relative w-4/5 max-w-xs h-full z-50 shadow-2xl animate-in slide-in-from-left duration-200">
+            {navContent(false, true)}
+          </div>
+        </div>
+      )}
+    </>
   );
 };

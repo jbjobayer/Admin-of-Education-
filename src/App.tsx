@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { AdminDataProvider, useAdminData } from "./context/AdminDataContext";
 import { Sidebar } from "./components/Sidebar";
 import { Header } from "./components/Header";
+import { BottomNav } from "./components/BottomNav";
 import { DashboardOverview } from "./components/tabs/DashboardOverview";
 import { QuestionBankHub } from "./components/tabs/QuestionBankHub";
 import { ExamModelTestManager } from "./components/tabs/ExamModelTestManager";
@@ -15,7 +16,7 @@ import { StudentAppPreviewTab } from "./components/tabs/StudentAppPreviewTab";
 import { LiveAppPreviewModal } from "./components/modals/LiveAppPreviewModal";
 import { AiQuestionGeneratorModal } from "./components/modals/AiQuestionGeneratorModal";
 import { EmergencyNoticeModal } from "./components/modals/EmergencyNoticeModal";
-import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
+import { CheckCircle2, AlertCircle, Info } from "lucide-react";
 
 const AdminDashboardContent: React.FC = () => {
   const { activeTab, isDarkMode, toast } = useAdminData();
@@ -51,8 +52,8 @@ const AdminDashboardContent: React.FC = () => {
 
   return (
     <div className={`min-h-screen flex ${isDarkMode ? "dark" : ""}`}>
-      <div className="flex w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen">
-        {/* Main Collapsible Sidebar */}
+      <div className="flex w-full bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen relative">
+        {/* Main Collapsible Sidebar & Mobile Drawer */}
         <Sidebar />
 
         {/* Main Content Area */}
@@ -64,10 +65,13 @@ const AdminDashboardContent: React.FC = () => {
           />
 
           {/* Main Tab Content View */}
-          <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 space-y-6">
+          <main className="flex-1 overflow-y-auto p-3 sm:p-5 md:p-6 lg:p-8 space-y-4 sm:space-y-6 pb-24 md:pb-8">
             {renderActiveTab()}
           </main>
         </div>
+
+        {/* Mobile Sticky Bottom Navigation Bar */}
+        <BottomNav />
       </div>
 
       {/* Global Modals */}
@@ -83,9 +87,9 @@ const AdminDashboardContent: React.FC = () => {
 
       {/* Global Toast Notification */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-5">
+        <div className="fixed bottom-20 md:bottom-6 right-4 sm:right-6 left-4 sm:left-auto z-50 animate-in fade-in slide-in-from-bottom-5">
           <div
-            className={`flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl border text-sm font-medium ${
+            className={`flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl border text-xs sm:text-sm font-medium max-w-md mx-auto ${
               toast.type === "success"
                 ? "bg-emerald-900 text-white border-emerald-700 shadow-emerald-950/40"
                 : toast.type === "error"
@@ -102,7 +106,7 @@ const AdminDashboardContent: React.FC = () => {
             {toast.type === "info" && (
               <Info className="w-5 h-5 text-blue-400 flex-shrink-0" />
             )}
-            <span>{toast.message}</span>
+            <span className="flex-1">{toast.message}</span>
           </div>
         </div>
       )}
@@ -110,10 +114,12 @@ const AdminDashboardContent: React.FC = () => {
   );
 };
 
-export default function App() {
+export function App() {
   return (
     <AdminDataProvider>
       <AdminDashboardContent />
     </AdminDataProvider>
   );
 }
+
+export default App;

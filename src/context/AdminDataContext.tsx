@@ -111,6 +111,10 @@ interface AdminDataContextType {
   isPreviewModalOpen: boolean;
   setIsPreviewModalOpen: (open: boolean) => void;
 
+  // Mobile Navigation Drawer
+  isMobileDrawerOpen: boolean;
+  setIsMobileDrawerOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+
   // Notification Toast Helper
   toast: { message: string; type: "success" | "error" | "info" } | null;
   showToast: (message: string, type?: "success" | "error" | "info") => void;
@@ -133,6 +137,7 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
   const [searchQuery, setSearchQuery] = useState("");
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
@@ -635,6 +640,8 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteHomeBanner,
         isPreviewModalOpen,
         setIsPreviewModalOpen,
+        isMobileDrawerOpen,
+        setIsMobileDrawerOpen,
         toast,
         showToast,
         resetAllData,
