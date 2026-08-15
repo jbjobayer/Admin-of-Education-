@@ -1,0 +1,6 @@
+{
+  "name": "Tamreen Central Admin CMS & Command Center",
+  "description": "Comprehensive Admin Panel & CMS for Tamreen Madrasah & Islamic competitive exam preparation ecosystem with Supabase backend, Gemini AI question generator, live analytics, and granular tab controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
