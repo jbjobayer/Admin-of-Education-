@@ -16,27 +16,94 @@ import { StudentAppPreviewTab } from "./components/tabs/StudentAppPreviewTab";
 import { LiveAppPreviewModal } from "./components/modals/LiveAppPreviewModal";
 import { AiQuestionGeneratorModal } from "./components/modals/AiQuestionGeneratorModal";
 import { EmergencyNoticeModal } from "./components/modals/EmergencyNoticeModal";
+import { QuestionFormModal } from "./components/modals/QuestionFormModal";
+import { BulkPasteParserModal } from "./components/modals/BulkPasteParserModal";
+import { ExamFormModal } from "./components/modals/ExamFormModal";
+import { CourseFormModal } from "./components/modals/CourseFormModal";
+import { JobCircularModal } from "./components/modals/JobCircularModal";
+import { Question, Exam, Course, JobCircular } from "./types";
 import { CheckCircle2, AlertCircle, Info } from "lucide-react";
 
 const AdminDashboardContent: React.FC = () => {
-  const { activeTab, isDarkMode, toast } = useAdminData();
+  const { activeTab, isDarkMode, toast, setIsPreviewModalOpen } = useAdminData();
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
+
+  // Additional CRUD Modals State
+  const [isQuestionFormOpen, setIsQuestionFormOpen] = useState(false);
+  const [questionToEdit, setQuestionToEdit] = useState<Question | null>(null);
+
+  const [isBulkParserOpen, setIsBulkParserOpen] = useState(false);
+
+  const [isExamFormOpen, setIsExamFormOpen] = useState(false);
+  const [examToEdit, setExamToEdit] = useState<Exam | null>(null);
+
+  const [isCourseFormOpen, setIsCourseFormOpen] = useState(false);
+  const [courseToEdit, setCourseToEdit] = useState<Course | null>(null);
+
+  const [isJobFormOpen, setIsJobFormOpen] = useState(false);
+  const [jobToEdit, setJobToEdit] = useState<JobCircular | null>(null);
 
   const renderActiveTab = () => {
     switch (activeTab) {
       case "dashboard":
-        return <DashboardOverview />;
+        return (
+          <DashboardOverview
+            onOpenAiGenerator={() => setIsAiModalOpen(true)}
+            onOpenEmergencyNotice={() => setIsEmergencyModalOpen(true)}
+            onOpenNewQuestion={() => {
+              setQuestionToEdit(null);
+              setIsQuestionFormOpen(true);
+            }}
+            onOpenNewExam={() => {
+              setExamToEdit(null);
+              setIsExamFormOpen(true);
+            }}
+          />
+        );
       case "questions":
-        return <QuestionBankHub onOpenAiModal={() => setIsAiModalOpen(true)} />;
+        return (
+          <QuestionBankHub
+            onOpenManualForm={(q) => {
+              setQuestionToEdit(q || null);
+              setIsQuestionFormOpen(true);
+            }}
+            onOpenBulkParser={() => setIsBulkParserOpen(true)}
+            onOpenAiGenerator={() => setIsAiModalOpen(true)}
+          />
+        );
       case "exams":
-        return <ExamModelTestManager />;
+        return (
+          <ExamModelTestManager
+            onOpenExamForm={(e) => {
+              setExamToEdit(e || null);
+              setIsExamFormOpen(true);
+            }}
+            onOpenLiveSimulatorForExam={() => {
+              setIsPreviewModalOpen(true);
+            }}
+          />
+        );
       case "courses":
-        return <CourseBatchManager />;
+        return (
+          <CourseBatchManager
+            onOpenCourseForm={(c) => {
+              setCourseToEdit(c || null);
+              setIsCourseFormOpen(true);
+            }}
+          />
+        );
       case "subjects":
         return <SubjectConfigHub />;
       case "jobs":
-        return <JobCircularManager />;
+        return (
+          <JobCircularManager
+            onOpenJobForm={(j) => {
+              setJobToEdit(j || null);
+              setIsJobFormOpen(true);
+            }}
+          />
+        );
       case "payments":
         return <PaymentSubscriptionManager />;
       case "app_customizer":
@@ -46,7 +113,18 @@ const AdminDashboardContent: React.FC = () => {
       case "student_preview":
         return <StudentAppPreviewTab />;
       default:
-        return <DashboardOverview />;
+        return <DashboardOverview
+          onOpenAiGenerator={() => setIsAiModalOpen(true)}
+          onOpenEmergencyNotice={() => setIsEmergencyModalOpen(true)}
+          onOpenNewQuestion={() => {
+            setQuestionToEdit(null);
+            setIsQuestionFormOpen(true);
+          }}
+          onOpenNewExam={() => {
+            setExamToEdit(null);
+            setIsExamFormOpen(true);
+          }}
+        />;
     }
   };
 
@@ -83,6 +161,42 @@ const AdminDashboardContent: React.FC = () => {
       <EmergencyNoticeModal
         isOpen={isEmergencyModalOpen}
         onClose={() => setIsEmergencyModalOpen(false)}
+      />
+      <QuestionFormModal
+        isOpen={isQuestionFormOpen}
+        onClose={() => {
+          setIsQuestionFormOpen(false);
+          setQuestionToEdit(null);
+        }}
+        questionToEdit={questionToEdit}
+      />
+      <BulkPasteParserModal
+        isOpen={isBulkParserOpen}
+        onClose={() => setIsBulkParserOpen(false)}
+      />
+      <ExamFormModal
+        isOpen={isExamFormOpen}
+        onClose={() => {
+          setIsExamFormOpen(false);
+          setExamToEdit(null);
+        }}
+        examToEdit={examToEdit}
+      />
+      <CourseFormModal
+        isOpen={isCourseFormOpen}
+        onClose={() => {
+          setIsCourseFormOpen(false);
+          setCourseToEdit(null);
+        }}
+        courseToEdit={courseToEdit}
+      />
+      <JobCircularModal
+        isOpen={isJobFormOpen}
+        onClose={() => {
+          setIsJobFormOpen(false);
+          setJobToEdit(null);
+        }}
+        jobToEdit={jobToEdit}
       />
 
       {/* Global Toast Notification */}

@@ -5,16 +5,18 @@ export type SubscriptionPlanId = "free" | "monthly" | "quarterly" | "half_yearly
 export interface Profile {
   id: string;
   full_name: string;
-  phone: string;
+  phone?: string;
   email?: string;
+  avatar_url?: string;
   role: UserRole;
-  is_premium: boolean;
+  is_active?: boolean;
+  is_premium?: boolean;
   subscription_plan?: SubscriptionPlanId;
   subscription_expiry?: string;
   madrasah_name?: string;
   district?: string;
-  avatar_url?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export type QuestionDifficulty = "Easy" | "Medium" | "Hard";
@@ -22,43 +24,68 @@ export type ExamTargetCategory = "NTRCA" | "Dakhil" | "Alim" | "Fazil" | "Kamil"
 
 export interface Question {
   id: string;
+  exam_id?: string;
+  question_number?: number;
+  question_text?: string;
+  option_a?: string;
+  option_b?: string;
+  option_c?: string;
+  option_d?: string;
+  correct_option?: string;
+  explanation: string;
+  marks?: number;
+  negative_marks?: number;
+  image_url?: string;
+  sort_order?: number;
+  created_at: string;
+  // UI & convenience properties:
+  question: string;
+  options: string[];
+  correct_index: number;
   subject_id: string;
   subject_name: string;
   topic: string;
-  question: string;
   arabic_text?: string;
-  options: string[];
-  correct_index: number;
-  explanation: string;
-  source: string;
+  source?: string;
   difficulty: QuestionDifficulty;
   exam_type: ExamTargetCategory;
   tags?: string[];
-  created_at: string;
 }
 
-export type ExamCategory = "free_test" | "daily_live" | "weekly_model_test" | "monthly_mega" | "premium_ntrca";
+export type ExamCategory = "free_test" | "daily_live" | "weekly_model_test" | "monthly_mega" | "premium_ntrca" | "model_test" | "daily_test" | "chapter_test" | "full_test" | "live_exam";
 export type ExamStatus = "upcoming" | "live" | "completed" | "archived";
 
 export interface Exam {
   id: string;
+  course_id?: string;
   title: string;
-  category: ExamCategory;
-  subject: string;
-  syllabus: string;
+  description?: string;
+  exam_type?: "model_test" | "daily_test" | "chapter_test" | "full_test" | "live_exam" | string;
+  total_questions?: number;
   duration_minutes: number;
   total_marks: number;
+  negative_mark?: number;
+  pass_mark?: number;
+  exam_date?: string;
+  is_free?: boolean;
+  is_published?: boolean;
+  sort_order?: number;
+  created_at: string;
+  updated_at?: string;
+  // UI / legacy helper properties:
+  category?: ExamCategory;
+  subject?: string;
+  syllabus?: string;
   pass_marks?: number;
-  negative_marking: number; // e.g., 0.25, 0.50, 0
-  start_time: string;
-  end_time: string;
-  result_published: boolean;
-  status: ExamStatus;
-  questions: Question[];
-  participant_count: number;
+  negative_marking?: number;
+  start_time?: string;
+  end_time?: string;
+  result_published?: boolean;
+  status?: ExamStatus;
+  questions?: Question[];
+  participant_count?: number;
   banner_image?: string;
   is_featured?: boolean;
-  created_at: string;
 }
 
 export interface ExamSubmission {
@@ -76,7 +103,7 @@ export interface ExamSubmission {
   unanswered_count: number;
   time_taken_seconds: number;
   rank?: number;
-  answers: Record<string, number>; // questionId -> selectedIndex
+  answers: Record<string, number>;
   submitted_at: string;
 }
 
@@ -107,26 +134,163 @@ export interface CourseChapter {
   }[];
 }
 
+export interface CourseTab {
+  id: string;
+  course_id: string;
+  tab_key: "details" | "routine" | "syllabus" | "materials" | "exams" | "leaderboard";
+  tab_title: string;
+  is_enabled: boolean;
+  sort_order: number;
+}
+
+export interface CourseRoutine {
+  id: string;
+  course_id: string;
+  title: string;
+  description?: string;
+  instructor_name?: string;
+  routine_date?: string;
+  start_time?: string;
+  end_time?: string;
+  status: string;
+  meeting_url?: string;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CourseSyllabusItem {
+  id: string;
+  module_id: string;
+  title: string;
+  description?: string;
+  video_url?: string;
+  is_free: boolean;
+  sort_order: number;
+  created_at?: string;
+}
+
+export interface CourseSyllabusModule {
+  id: string;
+  course_id: string;
+  module_number: number;
+  title: string;
+  description?: string;
+  class_count: number;
+  is_expanded?: boolean;
+  sort_order: number;
+  created_at?: string;
+  items?: CourseSyllabusItem[];
+}
+
+export interface CourseMaterial {
+  id: string;
+  course_id: string;
+  module_id?: string;
+  title: string;
+  description?: string;
+  material_type: string;
+  file_url: string;
+  preview_url?: string;
+  file_size?: string;
+  page_count?: number;
+  is_free: boolean;
+  is_published: boolean;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Course {
   id: string;
   title: string;
-  subtitle: string;
-  cover_image: string;
-  mentor: string;
-  mentor_title: string;
-  mentor_avatar?: string;
-  original_price: number;
-  discount_price: number;
-  course_tag: "NTRCA Special" | "Hifz Revision" | "Fazil & Kamil Batch" | "Arabi Bhasha & Nahu" | "Primary & NTRCA Special";
-  features: string[];
-  custom_buttons: CourseButton[];
-  chapters: CourseChapter[];
+  slug?: string;
+  subtitle?: string;
+  description?: string;
+  instructor_name?: string;
+  instructor_title?: string;
+  thumbnail_url?: string;
+  banner_url?: string;
+  price: number;
+  old_price?: number;
+  is_free: boolean;
+  is_published: boolean;
+  total_students?: number;
+  total_exams?: number;
+  total_modules?: number;
+  sort_order?: number;
+  created_at: string;
+  updated_at?: string;
+  // UI legacy / helper fields:
+  mentor?: string;
+  mentor_title?: string;
+  cover_image?: string;
+  original_price?: number;
+  discount_price?: number;
+  course_tag?: "NTRCA Special" | "Hifz Revision" | "Fazil & Kamil Batch" | "Arabi Bhasha & Nahu" | "Primary & NTRCA Special" | string;
+  features?: string[];
+  custom_buttons?: CourseButton[];
+  chapters?: CourseChapter[];
   routine_url?: string;
   syllabus_url?: string;
-  enrolled_count: number;
-  is_active: boolean;
-  is_featured: boolean;
+  enrolled_count?: number;
+  is_active?: boolean;
+  is_featured?: boolean;
+}
+
+export interface CourseEnrollment {
+  id: string;
+  user_id: string;
+  course_id: string;
+  amount: number;
+  payment_method: string;
+  transaction_id: string;
+  payment_number: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  payment_note?: string;
+  admin_note?: string;
+  submitted_at: string;
+  approved_at?: string;
+  approved_by?: string;
   created_at: string;
+  updated_at?: string;
+  student_name?: string;
+  student_phone?: string;
+  student_email?: string;
+  course_title?: string;
+}
+
+export interface ExamResult {
+  id: string;
+  user_id: string;
+  exam_id: string;
+  course_id?: string;
+  score: number;
+  total_marks: number;
+  correct_answers: number;
+  wrong_answers: number;
+  skipped_answers: number;
+  time_taken_seconds: number;
+  rank?: number;
+  submitted_at: string;
+  student_name?: string;
+  avatar_url?: string;
+  exam_title?: string;
+  course_title?: string;
+}
+
+export interface CourseLeaderboardEntry {
+  id: string;
+  course_id?: string;
+  exam_id?: string;
+  user_id: string;
+  full_name: string;
+  avatar_url?: string;
+  score: number;
+  total_marks: number;
+  time_taken_seconds: number;
+  submitted_at: string;
+  rank: number;
 }
 
 export interface SubjectConfig {

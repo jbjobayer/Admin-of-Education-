@@ -14,8 +14,9 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
   onClose,
   questionToEdit,
 }) => {
-  const { subjects, addQuestion, updateQuestion, showToast } = useAdminData();
+  const { subjects, exams, addQuestion, updateQuestion, showToast } = useAdminData();
 
+  const [examId, setExamId] = useState<string>(exams[0]?.id || "");
   const [subjectId, setSubjectId] = useState(subjects[0]?.id || "sub-1");
   const [topic, setTopic] = useState("");
   const [questionText, setQuestionText] = useState("");
@@ -32,20 +33,22 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
 
   useEffect(() => {
     if (questionToEdit) {
+      setExamId(questionToEdit.exam_id || exams[0]?.id || "");
       setSubjectId(questionToEdit.subject_id);
       setTopic(questionToEdit.topic || "");
-      setQuestionText(questionToEdit.question);
+      setQuestionText(questionToEdit.question || questionToEdit.question_text || "");
       setArabicText(questionToEdit.arabic_text || "");
-      setOptionA(questionToEdit.options[0] || "");
-      setOptionB(questionToEdit.options[1] || "");
-      setOptionC(questionToEdit.options[2] || "");
-      setOptionD(questionToEdit.options[3] || "");
-      setCorrectIndex(questionToEdit.correct_index);
-      setExplanation(questionToEdit.explanation);
+      setOptionA(questionToEdit.options?.[0] || questionToEdit.option_a || "");
+      setOptionB(questionToEdit.options?.[1] || questionToEdit.option_b || "");
+      setOptionC(questionToEdit.options?.[2] || questionToEdit.option_c || "");
+      setOptionD(questionToEdit.options?.[3] || questionToEdit.option_d || "");
+      setCorrectIndex(questionToEdit.correct_index !== undefined ? questionToEdit.correct_index : 0);
+      setExplanation(questionToEdit.explanation || "");
       setSource(questionToEdit.source || "");
-      setDifficulty(questionToEdit.difficulty);
-      setExamType(questionToEdit.exam_type);
+      setDifficulty(questionToEdit.difficulty || "Medium");
+      setExamType(questionToEdit.exam_type || "NTRCA");
     } else {
+      setExamId(exams[0]?.id || "");
       setSubjectId(subjects[0]?.id || "sub-1");
       setTopic("");
       setQuestionText("");
@@ -60,7 +63,7 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
       setDifficulty("Medium");
       setExamType("NTRCA");
     }
-  }, [questionToEdit, subjects, isOpen]);
+  }, [questionToEdit, subjects, exams, isOpen]);
 
   if (!isOpen) return null;
 
@@ -73,14 +76,23 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
       return;
     }
 
-    const qData = {
+    const optMap: Record<number, string> = { 0: "option_a", 1: "option_b", 2: "option_c", 3: "option_d" };
+
+    const qData: any = {
+      exam_id: examId || undefined,
       subject_id: subjectId,
-      subject_name: currentSubject.name_bn,
+      subject_name: currentSubject?.name_bn || "সাধারণ বিষয়",
       topic: topic.trim() || "সাধারণ",
       question: questionText.trim(),
+      question_text: questionText.trim(),
       arabic_text: arabicText.trim() || undefined,
+      option_a: optionA.trim(),
+      option_b: optionB.trim(),
+      option_c: optionC.trim() || "গ",
+      option_d: optionD.trim() || "ঘ",
       options: [optionA.trim(), optionB.trim(), optionC.trim() || "গ", optionD.trim() || "ঘ"],
       correct_index: correctIndex,
+      correct_option: optMap[correctIndex] || "option_a",
       explanation: explanation.trim(),
       source: source.trim() || "মাদ্রাসা পাঠ্যবই ও রেফারেন্স",
       difficulty,
@@ -119,7 +131,7 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                 বিষয় *
@@ -132,6 +144,24 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
                 {subjects.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name_bn}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                মডেল টেস্ট / পরীক্ষা নির্বাচন
+              </label>
+              <select
+                value={examId}
+                onChange={(e) => setExamId(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+              >
+                <option value="">সেন্ট্রাল প্রশ্ন ব্যাংক (সাধারণ)</option>
+                {exams.map((ex) => (
+                  <option key={ex.id} value={ex.id}>
+                    {ex.title}
                   </option>
                 ))}
               </select>

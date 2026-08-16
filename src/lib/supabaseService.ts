@@ -1,0 +1,1085 @@
+import { getSupabaseClient } from "./supabase";
+import {
+  Profile,
+  Course,
+  CourseTab,
+  CourseRoutine,
+  CourseSyllabusModule,
+  CourseSyllabusItem,
+  CourseMaterial,
+  Exam,
+  Question,
+  CourseEnrollment,
+  ExamResult,
+  CourseLeaderboardEntry,
+} from "../types";
+
+export interface ServiceResult<T> {
+  data: T | null;
+  error: string | null;
+}
+
+// -------------------------------------------------------------
+// 1. PROFILES (Users & Students)
+// -------------------------------------------------------------
+export async function dbFetchProfiles(): Promise<ServiceResult<Profile[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching profiles:", error);
+      return { data: null, error: error.message };
+    }
+    return { data: (data as Profile[]) || [], error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "প্রোফাইল লোড করতে ব্যর্থ হয়েছে।" };
+  }
+}
+
+export async function dbUpdateProfile(
+  id: string,
+  updates: Partial<Profile>
+): Promise<ServiceResult<Profile>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+    return { data: data as Profile, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "প্রোফাইল আপডেট করতে ব্যর্থ হয়েছে।" };
+  }
+}
+
+export async function dbCheckAdminAccess(): Promise<{ isAdmin: boolean; profile: Profile | null; error: string | null }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { isAdmin: false, profile: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData.user) {
+      return { isAdmin: false, profile: null, error: "ব্যবহারকারী লগইন করা নেই।" };
+    }
+
+    const { data: profile, error: profError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", authData.user.id)
+      .single();
+
+    if (profError || !profile) {
+      return { isAdmin: false, profile: null, error: "প্রোফাইল পাওয়া যায়নি।" };
+    }
+
+    const isAdmin = profile.role === "admin" && profile.is_active === true;
+    return { isAdmin, profile: profile as Profile, error: null };
+  } catch (err: any) {
+    return { isAdmin: false, profile: null, error: err?.message || "অনুমোদন যাচাই করতে সমস্যা হয়েছে।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 2. COURSES CRUD
+// -------------------------------------------------------------
+export async function dbFetchCourses(): Promise<ServiceResult<Course[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("courses")
+      .select("*")
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+    return { data: (data as Course[]) || [], error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "কোর্স লোড করতে সমস্যা হয়েছে।" };
+  }
+}
+
+export async function dbCreateCourse(
+  course: Omit<Course, "id" | "created_at" | "updated_at">
+): Promise<ServiceResult<Course>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const payload = {
+      title: course.title,
+      slug: course.slug || course.title.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now(),
+      subtitle: course.subtitle || "",
+      description: course.description || "",
+      instructor_name: course.instructor_name || course.mentor || "",
+      instructor_title: course.instructor_title || course.mentor_title || "",
+      thumbnail_url: course.thumbnail_url || course.cover_image || "",
+      banner_url: course.banner_url || "",
+      price: Number(course.price ?? course.discount_price ?? 0),
+      old_price: Number(course.old_price ?? course.original_price ?? 0),
+      is_free: Boolean(course.is_free),
+      is_published: course.is_published !== undefined ? course.is_published : true,
+      total_students: course.total_students || course.enrolled_count || 0,
+      total_exams: course.total_exams || 0,
+      total_modules: course.total_modules || 0,
+      sort_order: course.sort_order || 0,
+    };
+
+    const { data, error } = await supabase
+      .from("courses")
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+
+    // Also bootstrap default tabs for this course
+    if (data?.id) {
+      const defaultTabs = [
+        { course_id: data.id, tab_key: "details", tab_title: "বিবরণ", is_enabled: true, sort_order: 1 },
+        { course_id: data.id, tab_key: "routine", tab_title: "রুটিন", is_enabled: true, sort_order: 2 },
+        { course_id: data.id, tab_key: "syllabus", tab_title: "সিলেবাস", is_enabled: true, sort_order: 3 },
+        { course_id: data.id, tab_key: "materials", tab_title: "লেকচার শিট ও PDF", is_enabled: true, sort_order: 4 },
+        { course_id: data.id, tab_key: "exams", tab_title: "মডেল টেস্ট ও পরীক্ষা", is_enabled: true, sort_order: 5 },
+        { course_id: data.id, tab_key: "leaderboard", tab_title: "লিডারবোর্ড", is_enabled: true, sort_order: 6 },
+      ];
+      await supabase.from("course_tabs").insert(defaultTabs);
+    }
+
+    return { data: data as Course, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "কোর্স তৈরি করা সম্ভব হয়নি।" };
+  }
+}
+
+export async function dbUpdateCourse(
+  id: string,
+  course: Partial<Course>
+): Promise<ServiceResult<Course>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const payload: any = { ...course };
+    delete payload.id;
+    delete payload.created_at;
+    delete payload.updated_at;
+
+    // Normalization with DB columns
+    if (course.mentor !== undefined) payload.instructor_name = course.mentor;
+    if (course.mentor_title !== undefined) payload.instructor_title = course.mentor_title;
+    if (course.cover_image !== undefined) payload.thumbnail_url = course.cover_image;
+    if (course.discount_price !== undefined) payload.price = Number(course.discount_price);
+    if (course.original_price !== undefined) payload.old_price = Number(course.original_price);
+    if (course.is_active !== undefined) payload.is_published = course.is_active;
+
+    const { data, error } = await supabase
+      .from("courses")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+    return { data: data as Course, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "কোর্স আপডেট করতে সমস্যা হয়েছে।" };
+  }
+}
+
+export async function dbDeleteCourse(id: string): Promise<ServiceResult<boolean>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { error } = await supabase.from("courses").delete().eq("id", id);
+    if (error) return { data: false, error: error.message };
+    return { data: true, error: null };
+  } catch (err: any) {
+    return { data: false, error: err?.message || "কোর্স মুছে ফেলা যায়নি।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 3. COURSE TABS
+// -------------------------------------------------------------
+export async function dbFetchCourseTabs(courseId: string): Promise<ServiceResult<CourseTab[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("course_tabs")
+      .select("*")
+      .eq("course_id", courseId)
+      .order("sort_order", { ascending: true });
+
+    if (error) return { data: null, error: error.message };
+    return { data: (data as CourseTab[]) || [], error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "ট্যাব লোড করতে সমস্যা হয়েছে।" };
+  }
+}
+
+export async function dbUpsertCourseTab(
+  tab: Partial<CourseTab> & { course_id: string; tab_key: string; tab_title: string }
+): Promise<ServiceResult<CourseTab>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("course_tabs")
+      .upsert(tab, { onConflict: "course_id,tab_key" })
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+    return { data: data as CourseTab, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "ট্যাব সংরক্ষণ করা যায়নি।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 4. COURSE ROUTINES
+// -------------------------------------------------------------
+export async function dbFetchCourseRoutines(courseId: string): Promise<ServiceResult<CourseRoutine[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("course_routines")
+      .select("*")
+      .eq("course_id", courseId)
+      .order("sort_order", { ascending: true })
+      .order("routine_date", { ascending: true });
+
+    if (error) return { data: null, error: error.message };
+    return { data: (data as CourseRoutine[]) || [], error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "রুটিন লোড করতে সমস্যা হয়েছে।" };
+  }
+}
+
+export async function dbCreateCourseRoutine(
+  routine: Omit<CourseRoutine, "id" | "created_at" | "updated_at">
+): Promise<ServiceResult<CourseRoutine>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("course_routines")
+      .insert(routine)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+    return { data: data as CourseRoutine, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "রুটিন তৈরি করা সম্ভব হয়নি।" };
+  }
+}
+
+export async function dbUpdateCourseRoutine(
+  id: string,
+  routine: Partial<CourseRoutine>
+): Promise<ServiceResult<CourseRoutine>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("course_routines")
+      .update(routine)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+    return { data: data as CourseRoutine, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "রুটিন আপডেট করা যায়নি।" };
+  }
+}
+
+export async function dbDeleteCourseRoutine(id: string): Promise<ServiceResult<boolean>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { error } = await supabase.from("course_routines").delete().eq("id", id);
+    if (error) return { data: false, error: error.message };
+    return { data: true, error: null };
+  } catch (err: any) {
+    return { data: false, error: err?.message || "রুটিন মুছে ফেলা যায়নি।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 5. COURSE SYLLABUS (Modules & Items)
+// -------------------------------------------------------------
+export async function dbFetchCourseSyllabus(
+  courseId: string
+): Promise<ServiceResult<CourseSyllabusModule[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data: modules, error: modError } = await supabase
+      .from("course_syllabus_modules")
+      .select("*")
+      .eq("course_id", courseId)
+      .order("sort_order", { ascending: true })
+      .order("module_number", { ascending: true });
+
+    if (modError) return { data: null, error: modError.message };
+
+    const moduleIds = (modules || []).map((m) => m.id);
+    let items: CourseSyllabusItem[] = [];
+
+    if (moduleIds.length > 0) {
+      const { data: itemData, error: itemError } = await supabase
+        .from("course_syllabus_items")
+        .select("*")
+        .in("module_id", moduleIds)
+        .order("sort_order", { ascending: true });
+
+      if (!itemError && itemData) {
+        items = itemData as CourseSyllabusItem[];
+      }
+    }
+
+    const fullModules: CourseSyllabusModule[] = (modules || []).map((mod) => ({
+      ...mod,
+      items: items.filter((item) => item.module_id === mod.id),
+    }));
+
+    return { data: fullModules, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "সিলেবাস লোড করতে সমস্যা হয়েছে।" };
+  }
+}
+
+export async function dbCreateSyllabusModule(
+  module: Omit<CourseSyllabusModule, "id" | "created_at" | "items">
+): Promise<ServiceResult<CourseSyllabusModule>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("course_syllabus_modules")
+      .insert(module)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+    return { data: { ...data, items: [] } as CourseSyllabusModule, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "মডিউল তৈরি করা সম্ভব হয়নি।" };
+  }
+}
+
+export async function dbCreateSyllabusItem(
+  item: Omit<CourseSyllabusItem, "id" | "created_at">
+): Promise<ServiceResult<CourseSyllabusItem>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("course_syllabus_items")
+      .insert(item)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+    return { data: data as CourseSyllabusItem, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "সিলেবাস আইটেম তৈরি করা যায়নি।" };
+  }
+}
+
+export async function dbDeleteSyllabusModule(id: string): Promise<ServiceResult<boolean>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { error } = await supabase.from("course_syllabus_modules").delete().eq("id", id);
+    if (error) return { data: false, error: error.message };
+    return { data: true, error: null };
+  } catch (err: any) {
+    return { data: false, error: err?.message || "মডিউল মুছে ফেলা যায়নি।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 6. COURSE MATERIALS (Lecture Sheets / PDFs)
+// -------------------------------------------------------------
+export async function dbFetchCourseMaterials(
+  courseId?: string
+): Promise<ServiceResult<CourseMaterial[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    let query = supabase.from("course_materials").select("*");
+    if (courseId) {
+      query = query.eq("course_id", courseId);
+    }
+    const { data, error } = await query
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: false });
+
+    if (error) return { data: null, error: error.message };
+    return { data: (data as CourseMaterial[]) || [], error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "লেকচার শিট লোড করতে সমস্যা হয়েছে।" };
+  }
+}
+
+export async function dbCreateCourseMaterial(
+  material: Omit<CourseMaterial, "id" | "created_at" | "updated_at">
+): Promise<ServiceResult<CourseMaterial>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("course_materials")
+      .insert(material)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+    return { data: data as CourseMaterial, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "লেকচার শিট সংরক্ষণ করা যায়নি।" };
+  }
+}
+
+export async function dbDeleteCourseMaterial(id: string): Promise<ServiceResult<boolean>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { error } = await supabase.from("course_materials").delete().eq("id", id);
+    if (error) return { data: false, error: error.message };
+    return { data: true, error: null };
+  } catch (err: any) {
+    return { data: false, error: err?.message || "লেকচার শিট মুছে ফেলা যায়নি।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 7. EXAMS CRUD
+// -------------------------------------------------------------
+export async function dbFetchExams(): Promise<ServiceResult<Exam[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("exams")
+      .select("*")
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: false });
+
+    if (error) return { data: null, error: error.message };
+    return { data: (data as Exam[]) || [], error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "পরীক্ষা তালিকা লোড করতে সমস্যা হয়েছে।" };
+  }
+}
+
+export async function dbCreateExam(
+  exam: Omit<Exam, "id" | "created_at" | "updated_at">
+): Promise<ServiceResult<Exam>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const payload = {
+      course_id: exam.course_id || null,
+      title: exam.title,
+      description: exam.description || exam.syllabus || "",
+      exam_type: exam.exam_type || "model_test",
+      total_questions: exam.total_questions || (exam.questions ? exam.questions.length : 0),
+      duration_minutes: Number(exam.duration_minutes || 30),
+      total_marks: Number(exam.total_marks || 50),
+      negative_mark: Number(exam.negative_mark ?? exam.negative_marking ?? 0.25),
+      pass_mark: Number(exam.pass_mark ?? exam.pass_marks ?? 20),
+      exam_date: exam.exam_date || exam.start_time || new Date().toISOString(),
+      is_free: Boolean(exam.is_free),
+      is_published: exam.is_published !== undefined ? exam.is_published : true,
+      sort_order: exam.sort_order || 0,
+    };
+
+    const { data, error } = await supabase.from("exams").insert(payload).select().single();
+    if (error) return { data: null, error: error.message };
+    return { data: data as Exam, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "পরীক্ষা তৈরি করা সম্ভব হয়নি।" };
+  }
+}
+
+export async function dbUpdateExam(id: string, exam: Partial<Exam>): Promise<ServiceResult<Exam>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const payload: any = { ...exam };
+    delete payload.id;
+    delete payload.created_at;
+    delete payload.updated_at;
+    delete payload.questions;
+
+    if (exam.negative_marking !== undefined) payload.negative_mark = exam.negative_marking;
+    if (exam.pass_marks !== undefined) payload.pass_mark = exam.pass_marks;
+    if (exam.start_time !== undefined) payload.exam_date = exam.start_time;
+
+    const { data, error } = await supabase
+      .from("exams")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+    return { data: data as Exam, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "পরীক্ষা আপডেট করা যায়নি।" };
+  }
+}
+
+export async function dbDeleteExam(id: string): Promise<ServiceResult<boolean>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { error } = await supabase.from("exams").delete().eq("id", id);
+    if (error) return { data: false, error: error.message };
+    return { data: true, error: null };
+  } catch (err: any) {
+    return { data: false, error: err?.message || "পরীক্ষা মুছে ফেলা যায়নি।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 8. QUESTIONS CRUD (প্রশ্ন ব্যাংক হাব)
+// -------------------------------------------------------------
+export async function dbFetchQuestions(examId?: string): Promise<ServiceResult<Question[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    let query = supabase.from("questions").select("*");
+    if (examId) {
+      query = query.eq("exam_id", examId);
+    }
+    const { data, error } = await query
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: false });
+
+    if (error) return { data: null, error: error.message };
+
+    // Format into standard Question entity with fallback mappings
+    const formatted: Question[] = ((data as any[]) || []).map((row) => {
+      const optionsArr = [
+        row.option_a || "",
+        row.option_b || "",
+        row.option_c || "",
+        row.option_d || "",
+      ];
+      let correctIdx = 0;
+      if (row.correct_option === "option_b" || row.correct_option === "b" || row.correct_option === "১") correctIdx = 1;
+      else if (row.correct_option === "option_c" || row.correct_option === "c" || row.correct_option === "২") correctIdx = 2;
+      else if (row.correct_option === "option_d" || row.correct_option === "d" || row.correct_option === "৩") correctIdx = 3;
+
+      return {
+        id: row.id,
+        exam_id: row.exam_id,
+        question_number: row.question_number || 1,
+        question_text: row.question_text || row.question || "",
+        option_a: row.option_a || optionsArr[0] || "",
+        option_b: row.option_b || optionsArr[1] || "",
+        option_c: row.option_c || optionsArr[2] || "",
+        option_d: row.option_d || optionsArr[3] || "",
+        correct_option: row.correct_option || "option_a",
+        explanation: row.explanation || "",
+        marks: Number(row.marks || 1),
+        negative_marks: Number(row.negative_marks || 0.25),
+        image_url: row.image_url || "",
+        sort_order: row.sort_order || 0,
+        created_at: row.created_at || new Date().toISOString(),
+        // UI helper properties:
+        question: row.question_text || row.question || "",
+        options: optionsArr,
+        correct_index: correctIdx,
+        topic: row.topic || "সাধারণ",
+        subject_id: row.subject_id || "sub-1",
+        subject_name: row.subject_name || "মাদ্রাসা কারিকুলাম",
+        difficulty: row.difficulty || "Medium",
+        exam_type: row.exam_type || "NTRCA",
+      };
+    });
+
+    return { data: formatted, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "প্রশ্ন লোড করতে সমস্যা হয়েছে।" };
+  }
+}
+
+export async function dbCreateQuestion(
+  q: Partial<Question> & { exam_id?: string; question_text?: string; question?: string }
+): Promise<ServiceResult<Question>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const qText = (q.question_text || q.question || "").trim();
+    if (!qText) {
+      return { data: null, error: "প্রশ্নের বিবরণ দেওয়া আবশ্যক।" };
+    }
+
+    const optA = q.option_a || (q.options ? q.options[0] : "") || "ক";
+    const optB = q.option_b || (q.options ? q.options[1] : "") || "খ";
+    const optC = q.option_c || (q.options ? q.options[2] : "") || "গ";
+    const optD = q.option_d || (q.options ? q.options[3] : "") || "ঘ";
+
+    let correctOpt = q.correct_option || "option_a";
+    if (q.correct_index !== undefined) {
+      const mapIdx: Record<number, string> = { 0: "option_a", 1: "option_b", 2: "option_c", 3: "option_d" };
+      correctOpt = mapIdx[q.correct_index] || "option_a";
+    }
+
+    let targetExamId = q.exam_id;
+    // If no exam_id provided, fetch or use the first available exam
+    if (!targetExamId) {
+      const { data: firstExam } = await supabase.from("exams").select("id").limit(1).single();
+      if (firstExam?.id) {
+        targetExamId = firstExam.id;
+      } else {
+        // Create a default Model Test exam if none exists
+        const { data: newExam } = await supabase
+          .from("exams")
+          .insert({
+            title: "সেন্ট্রাল প্রশ্ন ব্যাংক মডেল টেস্ট",
+            description: "তামরীন সাধারণ প্রশ্ন ব্যাংক সংগ্রহ",
+            exam_type: "model_test",
+            total_questions: 1,
+            duration_minutes: 30,
+            total_marks: 50,
+            is_published: true,
+          })
+          .select("id")
+          .single();
+        targetExamId = newExam?.id;
+      }
+    }
+
+    if (!targetExamId) {
+      return { data: null, error: "প্রশ্ন যুক্ত করতে পরীক্ষা আইডি প্রয়োজন।" };
+    }
+
+    const payload = {
+      exam_id: targetExamId,
+      question_number: q.question_number || 1,
+      question_text: qText,
+      option_a: optA,
+      option_b: optB,
+      option_c: optC,
+      option_d: optD,
+      correct_option: correctOpt,
+      explanation: q.explanation || "",
+      marks: Number(q.marks || 1),
+      negative_marks: Number(q.negative_marks || 0.25),
+      image_url: q.image_url || null,
+      sort_order: q.sort_order || 0,
+    };
+
+    const { data, error } = await supabase.from("questions").insert(payload).select().single();
+
+    if (error) return { data: null, error: error.message };
+
+    const formatted: Question = {
+      ...data,
+      question: data.question_text,
+      options: [data.option_a, data.option_b, data.option_c, data.option_d],
+      correct_index:
+        data.correct_option === "option_b" || data.correct_option === "b"
+          ? 1
+          : data.correct_option === "option_c" || data.correct_option === "c"
+          ? 2
+          : data.correct_option === "option_d" || data.correct_option === "d"
+          ? 3
+          : 0,
+      topic: q.topic || "সাধারণ",
+      subject_id: q.subject_id || "sub-1",
+      subject_name: q.subject_name || "মাদ্রাসা কারিকুলাম",
+    };
+
+    return { data: formatted, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "প্রশ্ন তৈরি করা সম্ভব হয়নি।" };
+  }
+}
+
+export async function dbCreateBulkQuestions(
+  qs: Partial<Question>[]
+): Promise<ServiceResult<Question[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    if (qs.length === 0) return { data: [], error: null };
+
+    // Get an exam ID
+    let targetExamId = qs[0]?.exam_id;
+    if (!targetExamId) {
+      const { data: firstExam } = await supabase.from("exams").select("id").limit(1).single();
+      if (firstExam?.id) {
+        targetExamId = firstExam.id;
+      } else {
+        const { data: newExam } = await supabase
+          .from("exams")
+          .insert({
+            title: "সেন্ট্রাল প্রশ্ন ব্যাংক মডেল টেস্ট",
+            description: "তামরীন সাধারণ প্রশ্ন ব্যাংক সংগ্রহ",
+            exam_type: "model_test",
+            is_published: true,
+          })
+          .select("id")
+          .single();
+        targetExamId = newExam?.id;
+      }
+    }
+
+    const payloads = qs.map((q, idx) => {
+      const optA = q.option_a || (q.options ? q.options[0] : "") || "ক";
+      const optB = q.option_b || (q.options ? q.options[1] : "") || "খ";
+      const optC = q.option_c || (q.options ? q.options[2] : "") || "গ";
+      const optD = q.option_d || (q.options ? q.options[3] : "") || "ঘ";
+
+      let correctOpt = q.correct_option || "option_a";
+      if (q.correct_index !== undefined) {
+        const mapIdx: Record<number, string> = { 0: "option_a", 1: "option_b", 2: "option_c", 3: "option_d" };
+        correctOpt = mapIdx[q.correct_index] || "option_a";
+      }
+
+      return {
+        exam_id: q.exam_id || targetExamId,
+        question_number: q.question_number || idx + 1,
+        question_text: (q.question_text || q.question || "").trim(),
+        option_a: optA,
+        option_b: optB,
+        option_c: optC,
+        option_d: optD,
+        correct_option: correctOpt,
+        explanation: q.explanation || "",
+        marks: Number(q.marks || 1),
+        negative_marks: Number(q.negative_marks || 0.25),
+        sort_order: idx,
+      };
+    });
+
+    const { data, error } = await supabase.from("questions").insert(payloads).select();
+    if (error) return { data: null, error: error.message };
+
+    const formatted: Question[] = ((data as any[]) || []).map((row) => ({
+      ...row,
+      question: row.question_text,
+      options: [row.option_a, row.option_b, row.option_c, row.option_d],
+      correct_index:
+        row.correct_option === "option_b" || row.correct_option === "b"
+          ? 1
+          : row.correct_option === "option_c" || row.correct_option === "c"
+          ? 2
+          : row.correct_option === "option_d" || row.correct_option === "d"
+          ? 3
+          : 0,
+      topic: "বাল্ক পেস্ট",
+      subject_id: "sub-1",
+      subject_name: "মাদ্রাসা কারিকুলাম",
+    }));
+
+    return { data: formatted, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "বাল্ক প্রশ্ন সংরক্ষণ করা যায়নি।" };
+  }
+}
+
+export async function dbUpdateQuestion(
+  id: string,
+  q: Partial<Question>
+): Promise<ServiceResult<Question>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const payload: any = {};
+    if (q.question_text !== undefined || q.question !== undefined) {
+      payload.question_text = (q.question_text || q.question || "").trim();
+    }
+    if (q.option_a !== undefined) payload.option_a = q.option_a;
+    if (q.option_b !== undefined) payload.option_b = q.option_b;
+    if (q.option_c !== undefined) payload.option_c = q.option_c;
+    if (q.option_d !== undefined) payload.option_d = q.option_d;
+
+    if (q.options && q.options.length >= 4) {
+      payload.option_a = q.options[0];
+      payload.option_b = q.options[1];
+      payload.option_c = q.options[2];
+      payload.option_d = q.options[3];
+    }
+
+    if (q.correct_option !== undefined) {
+      payload.correct_option = q.correct_option;
+    } else if (q.correct_index !== undefined) {
+      const mapIdx: Record<number, string> = { 0: "option_a", 1: "option_b", 2: "option_c", 3: "option_d" };
+      payload.correct_option = mapIdx[q.correct_index] || "option_a";
+    }
+
+    if (q.explanation !== undefined) payload.explanation = q.explanation;
+    if (q.marks !== undefined) payload.marks = Number(q.marks);
+    if (q.negative_marks !== undefined) payload.negative_marks = Number(q.negative_marks);
+    if (q.image_url !== undefined) payload.image_url = q.image_url;
+    if (q.sort_order !== undefined) payload.sort_order = q.sort_order;
+
+    const { data, error } = await supabase
+      .from("questions")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+
+    const formatted: Question = {
+      ...data,
+      question: data.question_text,
+      options: [data.option_a, data.option_b, data.option_c, data.option_d],
+      correct_index:
+        data.correct_option === "option_b" || data.correct_option === "b"
+          ? 1
+          : data.correct_option === "option_c" || data.correct_option === "c"
+          ? 2
+          : data.correct_option === "option_d" || data.correct_option === "d"
+          ? 3
+          : 0,
+    };
+
+    return { data: formatted, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "প্রশ্ন আপডেট করা যায়নি।" };
+  }
+}
+
+export async function dbDeleteQuestion(id: string): Promise<ServiceResult<boolean>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { error } = await supabase.from("questions").delete().eq("id", id);
+    if (error) return { data: false, error: error.message };
+    return { data: true, error: null };
+  } catch (err: any) {
+    return { data: false, error: err?.message || "প্রশ্ন মুছে ফেলা যায়নি।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 9. COURSE ENROLLMENTS (কোর্স ভর্তি আবেদন ও পেমেন্ট)
+// -------------------------------------------------------------
+export async function dbFetchEnrollments(): Promise<ServiceResult<CourseEnrollment[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("course_enrollments")
+      .select(`
+        *,
+        profiles:user_id (full_name, phone, email),
+        courses:course_id (title)
+      `)
+      .order("created_at", { ascending: false });
+
+    if (error) return { data: null, error: error.message };
+
+    const formatted: CourseEnrollment[] = ((data as any[]) || []).map((row) => ({
+      id: row.id,
+      user_id: row.user_id,
+      course_id: row.course_id,
+      amount: Number(row.amount || 0),
+      payment_method: row.payment_method || "bKash",
+      transaction_id: row.transaction_id || "",
+      payment_number: row.payment_number || "",
+      status: row.status || "pending",
+      payment_note: row.payment_note || "",
+      admin_note: row.admin_note || "",
+      submitted_at: row.submitted_at || row.created_at || new Date().toISOString(),
+      approved_at: row.approved_at,
+      approved_by: row.approved_by,
+      created_at: row.created_at || new Date().toISOString(),
+      updated_at: row.updated_at,
+      student_name: row.profiles?.full_name || "তামরীন শিক্ষার্থী",
+      student_phone: row.profiles?.phone || row.payment_number || "",
+      student_email: row.profiles?.email || "",
+      course_title: row.courses?.title || "কোর্স প্যাকেজ",
+    }));
+
+    return { data: formatted, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "ভর্তি আবেদন লোড করতে সমস্যা হয়েছে।" };
+  }
+}
+
+export async function dbApproveEnrollment(
+  id: string,
+  adminId?: string
+): Promise<ServiceResult<CourseEnrollment>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const payload: any = {
+      status: "approved",
+      approved_at: new Date().toISOString(),
+    };
+    if (adminId) payload.approved_by = adminId;
+
+    const { data, error } = await supabase
+      .from("course_enrollments")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+    return { data: data as CourseEnrollment, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "আবেদন অনুমোদন করতে ব্যর্থ হয়েছে।" };
+  }
+}
+
+export async function dbRejectEnrollment(
+  id: string,
+  adminId?: string,
+  adminNote?: string
+): Promise<ServiceResult<CourseEnrollment>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const payload: any = {
+      status: "rejected",
+    };
+    if (adminId) payload.approved_by = adminId;
+    if (adminNote) payload.admin_note = adminNote;
+
+    const { data, error } = await supabase
+      .from("course_enrollments")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message };
+    return { data: data as CourseEnrollment, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "আবেদন বাতিল করতে ব্যর্থ হয়েছে।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 10. EXAM RESULTS & LEADERBOARD
+// -------------------------------------------------------------
+export async function dbFetchExamResults(
+  examId?: string,
+  courseId?: string
+): Promise<ServiceResult<ExamResult[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    let query = supabase.from("exam_results").select(`
+      *,
+      profiles:user_id (full_name, avatar_url),
+      exams:exam_id (title),
+      courses:course_id (title)
+    `);
+
+    if (examId) query = query.eq("exam_id", examId);
+    if (courseId) query = query.eq("course_id", courseId);
+
+    const { data, error } = await query
+      .order("score", { ascending: false })
+      .order("time_taken_seconds", { ascending: true });
+
+    if (error) return { data: null, error: error.message };
+
+    const formatted: ExamResult[] = ((data as any[]) || []).map((row, idx) => ({
+      id: row.id,
+      user_id: row.user_id,
+      exam_id: row.exam_id,
+      course_id: row.course_id,
+      score: Number(row.score || 0),
+      total_marks: Number(row.total_marks || 100),
+      correct_answers: Number(row.correct_answers || 0),
+      wrong_answers: Number(row.wrong_answers || 0),
+      skipped_answers: Number(row.skipped_answers || 0),
+      time_taken_seconds: Number(row.time_taken_seconds || 0),
+      rank: row.rank || idx + 1,
+      submitted_at: row.submitted_at || new Date().toISOString(),
+      student_name: row.profiles?.full_name || "তামরীন শিক্ষার্থী",
+      avatar_url: row.profiles?.avatar_url,
+      exam_title: row.exams?.title || "মডেল টেস্ট",
+      course_title: row.courses?.title,
+    }));
+
+    return { data: formatted, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "ফলাফল লোড করতে সমস্যা হয়েছে।" };
+  }
+}
+
+export async function dbFetchLeaderboard(
+  courseId?: string,
+  examId?: string
+): Promise<ServiceResult<CourseLeaderboardEntry[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    let query = supabase.from("course_leaderboard").select("*");
+    if (courseId) query = query.eq("course_id", courseId);
+    if (examId) query = query.eq("exam_id", examId);
+
+    const { data, error } = await query.order("rank", { ascending: true }).limit(50);
+    if (error) return { data: null, error: error.message };
+    return { data: (data as CourseLeaderboardEntry[]) || [], error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "লিডারবোর্ড লোড করতে সমস্যা হয়েছে।" };
+  }
+}

@@ -60,16 +60,16 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     toggleLiveExamBanner,
   } = useAdminData();
 
-  // Metrics calculations
-  const totalStudents = profiles.length + 18450; // Total registered
-  const premiumCount = profiles.filter((p) => p.is_premium).length + 3820;
+  // Metrics calculations from real database state
+  const totalStudents = profiles.length;
+  const premiumCount = profiles.filter((p) => p.is_premium || p.role === "admin").length;
   const pendingPayments = payments.filter((p) => p.status === "pending");
   const approvedPayments = payments.filter((p) => p.status === "approved");
   const todayRevenue = payments
     .filter((p) => p.status === "approved")
-    .reduce((sum, p) => sum + p.amount, 0) + 18450;
+    .reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
-  const totalExamsSubmitted = 24890;
+  const totalExamsSubmitted = submissions.length;
   const liveExams = exams.filter((e) => e.status === "live");
 
   // Chart data for daily participation trend

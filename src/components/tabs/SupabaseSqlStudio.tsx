@@ -13,13 +13,59 @@ import {
   Code,
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
-import { SUPABASE_SCHEMA_SQL, checkSupabaseConnection } from "../../lib/supabase";
+import {
+  SUPABASE_SCHEMA_SQL,
+  checkSupabaseConnection,
+  getSavedSupabaseConfig,
+  resetSupabaseClient,
+  SupabaseConfig,
+} from "../../lib/supabase";
 
 export const SupabaseSqlStudio: React.FC = () => {
   const { questions, exams, courses, subjects, payments, jobCirculars, profiles, showToast } = useAdminData();
 
   const [copied, setCopied] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<"idle" | "testing" | "connected" | "not_configured">("idle");
+  const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(() => getSavedSupabaseConfig());
+  const [connectionStatus, setConnectionStatus] = useState<"idle" | "testing" | "connected" | "not_configured">(() => {
+    const cfg = getSavedSupabaseConfig();
+    return cfg.url && cfg.anonKey ? (cfg.isConnected ? "connected" : "idle") : "not_configured";
+  });
+  const [connectionMsg, setConnectionMsg] = useState<string>("");
+
+  const handleSaveAndTestConfig = async () => {
+    if (!supabaseConfig.url || !supabaseConfig.anonKey) {
+      showToast("দয়া করে Supabase Project URL এবং Anon Key দিন।", "error");
+      setConnectionStatus("not_configured");
+      return;
+    }
+
+    setConnectionStatus("testing");
+    setConnectionMsg("Supabase সার্ভারের সাথে সংযোগ পরীক্ষা করা হচ্ছে...");
+
+    try {
+      resetSupabaseClient(supabaseConfig);
+      const res = await checkSupabaseConnection();
+      if (res.success) {
+        setConnectionStatus("connected");
+        setConnectionMsg(res.message);
+        const updated = { ...supabaseConfig, isConnected: true };
+        setSupabaseConfig(updated);
+        resetSupabaseClient(updated);
+        showToast("Supabase ডাটাবেজ সফলভাবে কানেক্ট হয়েছে!", "success");
+      } else {
+        setConnectionStatus("not_configured");
+        setConnectionMsg(res.message);
+        const updated = { ...supabaseConfig, isConnected: false };
+        setSupabaseConfig(updated);
+        resetSupabaseClient(updated);
+        showToast(res.message, "error");
+      }
+    } catch (e: any) {
+      setConnectionStatus("not_configured");
+      setConnectionMsg(e?.message || "সংযোগ ব্যর্থ হয়েছে।");
+      showToast("Supabase সংযোগ ব্যর্থ হয়েছে।", "error");
+    }
+  };
 
   const tables = [
     { name: "profiles", desc: "শিক্ষার্থীদের প্রোফাইল, মাদ্রাসার নাম ও প্রিমিয়াম মেয়াদ", count: profiles.length + 18450 },
@@ -96,39 +142,108 @@ export const SupabaseSqlStudio: React.FC = () => {
         </div>
       </div>
 
-      {/* Supabase Status Banner */}
-      <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-3xl p-6 text-white border border-slate-700 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <Server className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs font-mono text-emerald-400">SUPABASE CLOUD POSTGRESQL</span>
+      {/* Supabase Connection Setup & Live Diagnostic Card */}
+      <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold ${
+              connectionStatus === "connected"
+                ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 border border-emerald-500/30"
+                : connectionStatus === "testing"
+                ? "bg-amber-100 dark:bg-amber-950/60 text-amber-600 border border-amber-500/30"
+                : "bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-300 dark:border-slate-700"
+            }`}>
+              <Server className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-base text-slate-800 dark:text-white">
+                  Supabase ক্লাউড ডাটাবেজ কানেকশন স্ট্যাটাস
+                </h3>
+                <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                  connectionStatus === "connected"
+                    ? "bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
+                    : connectionStatus === "testing"
+                    ? "bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 animate-pulse"
+                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700"
+                }`}>
+                  {connectionStatus === "connected"
+                    ? "সফলভাবে সংযুক্ত (Connected)"
+                    : connectionStatus === "testing"
+                    ? "চেক করা হচ্ছে..."
+                    : "সংযুক্ত নয় (Not Configured / Offline)"}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                {connectionStatus === "connected"
+                  ? "তামরীন অ্যাডমিন সেন্ট্রাল ও Supabase PostgreSQL ডাটাবেজ ক্লাউডে লাইভ সংযুক্ত আছে।"
+                  : "আপনার Supabase প্রজেক্টের URL ও Anon Key ইনপুট দিয়ে লাইভ ক্লাউড সিঙ্ক চালু করুন।"}
+              </p>
+            </div>
           </div>
-          <h3 className="text-base font-bold">
-            Vercel + Supabase রিয়েল-টাইম কানেকশন
-          </h3>
-          <p className="text-xs text-slate-300 max-w-xl">
-            Vercel-এ প্রজেক্ট ডেপ্লয় করার পর Supabase ড্যাশবোর্ডে গিয়ে এই SQL স্কিমা স্ক্রিপ্টটি রান করলেই আপনার পুরো ডাটাবেজ স্বয়ংক্রিয়ভাবে প্রস্তুত হয়ে যাবে।
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleTestConnection}
-            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-2"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${connectionStatus === "testing" ? "animate-spin" : ""}`} />
-            <span>কানেকশন টেস্ট করুন</span>
-          </button>
 
           <a
             href="https://supabase.com/dashboard"
             target="_blank"
             rel="noreferrer"
-            className="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold transition-colors flex items-center gap-1.5"
+            className="self-start sm:self-auto px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-300 dark:border-slate-700"
           >
             <span>Supabase ড্যাশবোর্ড</span>
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
+        </div>
+
+        {/* Credentials Form */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+              Supabase Project URL
+            </label>
+            <input
+              type="text"
+              value={supabaseConfig.url}
+              onChange={(e) => setSupabaseConfig({ ...supabaseConfig, url: e.target.value })}
+              placeholder="https://xyzcompany.supabase.co"
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 dark:text-slate-100"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">Supabase Dashboard &gt; Project Settings &gt; API &gt; Project URL</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+              Supabase Anon Public API Key
+            </label>
+            <input
+              type="password"
+              value={supabaseConfig.anonKey}
+              onChange={(e) => setSupabaseConfig({ ...supabaseConfig, anonKey: e.target.value })}
+              placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 dark:text-slate-100"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">Supabase Dashboard &gt; Project Settings &gt; API &gt; anon / public key</p>
+          </div>
+        </div>
+
+        {connectionMsg && (
+          <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+            connectionStatus === "connected"
+              ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+              : "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
+          }`}>
+            {connectionStatus === "connected" ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0" />}
+            <span>{connectionMsg}</span>
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSaveAndTestConfig}
+            disabled={connectionStatus === "testing"}
+            className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all cursor-pointer flex items-center gap-2"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${connectionStatus === "testing" ? "animate-spin" : ""}`} />
+            <span>{connectionStatus === "testing" ? "যাচাই করা হচ্ছে..." : "সেভ করুন ও কানেকশন টেস্ট করুন"}</span>
+          </button>
         </div>
       </div>
 
