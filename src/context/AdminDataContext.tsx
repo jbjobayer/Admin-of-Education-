@@ -558,24 +558,40 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const toggleExamStatus = (id: string) => {
-    setExams((prev) =>
-      prev.map((e) => {
-        if (e.id === id) {
-          const nextStatus = e.status === "live" ? "completed" : e.status === "upcoming" ? "live" : "upcoming";
-          dbUpdateExam(id, { status: nextStatus }).catch((err) => console.error(err));
-          return { ...e, status: nextStatus };
+    let targetExam = exams.find((e) => e.id === id);
+    if (!targetExam) return;
+
+    const nextStatus = targetExam.status === "live" ? "completed" : targetExam.status === "upcoming" ? "live" : "upcoming";
+    const updatedExam = { ...targetExam, status: nextStatus };
+
+    setExams((prev) => prev.map((e) => (e.id === id ? updatedExam : e)));
+
+    dbUpdateExam(id, updatedExam)
+      .then((res) => {
+        if (res.data && res.data.id !== id) {
+          setExams((prev) => prev.map((e) => (e.id === id ? res.data! : e)));
         }
-        return e;
       })
-    );
+      .catch((err) => console.error("Error updating exam status:", err));
+
     showToast("পরীক্ষার স্ট্যাটাস পরিবর্তিত হয়েছে!");
   };
 
   const publishExamResult = (id: string) => {
-    setExams((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, result_published: true, status: "completed" } : e))
-    );
-    dbUpdateExam(id, { result_published: true, status: "completed" }).catch((err) => console.error(err));
+    let targetExam = exams.find((e) => e.id === id);
+    if (!targetExam) return;
+
+    const updatedExam = { ...targetExam, result_published: true, status: "completed" as const };
+    setExams((prev) => prev.map((e) => (e.id === id ? updatedExam : e)));
+
+    dbUpdateExam(id, updatedExam)
+      .then((res) => {
+        if (res.data && res.data.id !== id) {
+          setExams((prev) => prev.map((e) => (e.id === id ? res.data! : e)));
+        }
+      })
+      .catch((err) => console.error("Error publishing exam result:", err));
+
     showToast("পরীক্ষার ফলাফল ও মেরিট তালিকা প্রকাশ করা হয়েছে!");
   };
 

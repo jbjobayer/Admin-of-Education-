@@ -25,6 +25,16 @@ export interface ServiceResult<T> {
   } | null;
 }
 
+/**
+ * Validates if a given string is a valid standard UUID v4 format.
+ * Prevents PostgreSQL 22P02 "invalid input syntax for type uuid" crashes on temp IDs.
+ */
+export function isValidUuid(str?: string | null): boolean {
+  if (!str || typeof str !== "string") return false;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str.trim());
+}
+
 // -------------------------------------------------------------
 // 1. PROFILES (Users & Students)
 // -------------------------------------------------------------
@@ -53,6 +63,11 @@ export async function dbUpdateProfile(
   updates: Partial<Profile>
 ): Promise<ServiceResult<Profile>> {
   const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  if (!isValidUuid(id)) {
+    return { data: null, error: "অবৈধ প্রোফাইল আইডি।" };
+  }
   if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
 
   try {
@@ -182,6 +197,11 @@ export async function dbUpdateCourse(
   const supabase = getSupabaseClient();
   if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
 
+  if (!isValidUuid(id)) {
+    console.warn(`⚠️ Course ID "${id}" is not a valid UUID. Creating new row in 'courses' instead.`);
+    return dbCreateCourse(course as any);
+  }
+
   try {
     const payload: any = { ...course };
     delete payload.id;
@@ -214,6 +234,10 @@ export async function dbDeleteCourse(id: string): Promise<ServiceResult<boolean>
   const supabase = getSupabaseClient();
   if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
 
+  if (!isValidUuid(id)) {
+    return { data: true, error: null };
+  }
+
   try {
     const { error } = await supabase.from("courses").delete().eq("id", id);
     if (error) return { data: false, error: error.message };
@@ -229,6 +253,10 @@ export async function dbDeleteCourse(id: string): Promise<ServiceResult<boolean>
 export async function dbFetchCourseTabs(courseId: string): Promise<ServiceResult<CourseTab[]>> {
   const supabase = getSupabaseClient();
   if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  if (!isValidUuid(courseId)) {
+    return { data: [], error: null };
+  }
 
   try {
     const { data, error } = await supabase
@@ -563,7 +591,7 @@ export async function dbCreateExam(
     }
 
     const payload = {
-      course_id: exam.course_id ? exam.course_id : null,
+      course_id: isValidUuid(exam.course_id) ? exam.course_id : null,
       title: (exam.title || "নতুন মডেল টেস্ট").trim(),
       description: (exam.description || exam.syllabus || exam.subject || "").trim(),
       exam_type: examType,
@@ -677,9 +705,15 @@ export async function dbUpdateExam(id: string, exam: Partial<Exam>): Promise<Ser
   const supabase = getSupabaseClient();
   if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
 
+  // If the ID is a temporary local string (e.g. "exam-1786876191136"), insert as a real DB row instead of failing with 22P02
+  if (!isValidUuid(id)) {
+    console.warn(`⚠️ Exam ID "${id}" is not a valid UUID. Auto-inserting as new exam in Supabase.`);
+    return dbCreateExam(exam as any);
+  }
+
   try {
     const payload: any = {};
-    if (exam.course_id !== undefined) payload.course_id = exam.course_id || null;
+    if (exam.course_id !== undefined) payload.course_id = isValidUuid(exam.course_id) ? exam.course_id : null;
     if (exam.title !== undefined) payload.title = exam.title.trim();
     if (exam.description !== undefined || exam.syllabus !== undefined || exam.subject !== undefined) {
       payload.description = (exam.description || exam.syllabus || exam.subject || "").trim();
@@ -757,6 +791,10 @@ export async function dbDeleteExam(id: string): Promise<ServiceResult<boolean>> 
   const supabase = getSupabaseClient();
   if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
 
+  if (!isValidUuid(id)) {
+    return { data: true, error: null };
+  }
+
   try {
     console.log(`🚀 Executing Supabase DELETE on 'exams' (${id})`);
     const { error } = await supabase.from("exams").delete().eq("id", id);
@@ -802,6 +840,9 @@ export async function dbFetchQuestions(examId?: string): Promise<ServiceResult<Q
   try {
     let query = supabase.from("questions").select("*");
     if (examId) {
+      if (!isValidUuid(examId)) {
+        return { data: [], error: null };
+      }
       query = query.eq("exam_id", examId);
     }
     const { data, error } = await query
@@ -880,11 +921,11 @@ export async function dbCreateQuestion(
       correctOpt = mapIdx[q.correct_index] || "option_a";
     }
 
-    let targetExamId = q.exam_id;
-    // If no exam_id provided, fetch or use the first available exam
+    let targetExamId = isValidUuid(q.exam_id) ? q.exam_id : undefined;
+    // If no valid exam_id provided, fetch or use the first available exam
     if (!targetExamId) {
       const { data: firstExam } = await supabase.from("exams").select("id").limit(1).single();
-      if (firstExam?.id) {
+      if (firstExam?.id && isValidUuid(firstExam.id)) {
         targetExamId = firstExam.id;
       } else {
         // Create a default Model Test exam if none exists
@@ -905,7 +946,7 @@ export async function dbCreateQuestion(
       }
     }
 
-    if (!targetExamId) {
+    if (!targetExamId || !isValidUuid(targetExamId)) {
       return { data: null, error: "প্রশ্ন যুক্ত করতে পরীক্ষা আইডি প্রয়োজন।" };
     }
 
@@ -962,10 +1003,10 @@ export async function dbCreateBulkQuestions(
     if (qs.length === 0) return { data: [], error: null };
 
     // Get an exam ID
-    let targetExamId = qs[0]?.exam_id;
+    let targetExamId = isValidUuid(qs[0]?.exam_id) ? qs[0]?.exam_id : undefined;
     if (!targetExamId) {
       const { data: firstExam } = await supabase.from("exams").select("id").limit(1).single();
-      if (firstExam?.id) {
+      if (firstExam?.id && isValidUuid(firstExam.id)) {
         targetExamId = firstExam.id;
       } else {
         const { data: newExam } = await supabase
@@ -982,6 +1023,10 @@ export async function dbCreateBulkQuestions(
       }
     }
 
+    if (!targetExamId || !isValidUuid(targetExamId)) {
+      return { data: null, error: "প্রশ্ন যুক্ত করতে পরীক্ষা আইডি প্রয়োজন।" };
+    }
+
     const payloads = qs.map((q, idx) => {
       const optA = q.option_a || (q.options ? q.options[0] : "") || "ক";
       const optB = q.option_b || (q.options ? q.options[1] : "") || "খ";
@@ -995,7 +1040,7 @@ export async function dbCreateBulkQuestions(
       }
 
       return {
-        exam_id: q.exam_id || targetExamId,
+        exam_id: isValidUuid(q.exam_id) ? q.exam_id : targetExamId,
         question_number: q.question_number || idx + 1,
         question_text: (q.question_text || q.question || "").trim(),
         option_a: optA,
@@ -1042,6 +1087,10 @@ export async function dbUpdateQuestion(
 ): Promise<ServiceResult<Question>> {
   const supabase = getSupabaseClient();
   if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  if (!isValidUuid(id)) {
+    return dbCreateQuestion(q as any);
+  }
 
   try {
     const payload: any = {};
@@ -1105,6 +1154,10 @@ export async function dbUpdateQuestion(
 export async function dbDeleteQuestion(id: string): Promise<ServiceResult<boolean>> {
   const supabase = getSupabaseClient();
   if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  if (!isValidUuid(id)) {
+    return { data: true, error: null };
+  }
 
   try {
     const { error } = await supabase.from("questions").delete().eq("id", id);
