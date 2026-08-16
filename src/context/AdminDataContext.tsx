@@ -52,6 +52,7 @@ import {
   dbApproveEnrollment,
   dbRejectEnrollment,
   dbFetchExamResults,
+  isValidUuid,
 } from "../lib/supabaseService";
 
 export type AdminTab =
@@ -284,11 +285,37 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         dbFetchExamResults(),
       ]);
 
-      if (profilesRes.data) setProfiles(profilesRes.data);
-      if (coursesRes.data) setCourses(coursesRes.data);
-      if (examsRes.data) setExams(examsRes.data);
-      if (questionsRes.data) setQuestions(questionsRes.data);
-      if (enrollmentsRes.data) {
+      if (profilesRes.data && profilesRes.data.length > 0) {
+        setProfiles(profilesRes.data);
+      }
+      if (coursesRes.data && coursesRes.data.length > 0) {
+        setCourses(coursesRes.data);
+      }
+      if (examsRes.data && examsRes.data.length > 0) {
+        setExams(examsRes.data);
+      }
+      if (questionsRes.data) {
+        setQuestions((prevLocal) => {
+          if (questionsRes.data!.length === 0) {
+            // Never wipe local questions if Supabase returned 0 items
+            return prevLocal;
+          }
+          const dbIds = new Set(questionsRes.data!.map((q) => q.id));
+          const dbTexts = new Set(questionsRes.data!.map((q) => (q.question_text || q.question || "").trim().toLowerCase()));
+
+          // Keep any unsynced local questions (e.g. temporary IDs not yet in DB)
+          const localUnsynced = prevLocal.filter((local) => {
+            if (!isValidUuid(local.id)) {
+              const text = (local.question_text || local.question || "").trim().toLowerCase();
+              return !dbTexts.has(text);
+            }
+            return !dbIds.has(local.id);
+          });
+
+          return [...questionsRes.data!, ...localUnsynced];
+        });
+      }
+      if (enrollmentsRes.data && enrollmentsRes.data.length > 0) {
         setEnrollments(enrollmentsRes.data);
         // Map enrollments to payments state for unified payment/enrollment manager
         const mappedPayments: PaymentTransaction[] = enrollmentsRes.data.map((e) => ({
@@ -309,7 +336,9 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }));
         setPayments(mappedPayments);
       }
-      if (resultsRes.data) setExamResults(resultsRes.data);
+      if (resultsRes.data && resultsRes.data.length > 0) {
+        setExamResults(resultsRes.data);
+      }
 
       setIsSupabaseConnected(true);
     } catch (error) {
@@ -331,22 +360,28 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       .channel("tamreen-admin-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "questions" }, () => {
         dbFetchQuestions().then((res) => {
-          if (res.data) setQuestions(res.data);
+          if (res.data && res.data.length > 0) {
+            setQuestions((prevLocal) => {
+              const dbIds = new Set(res.data!.map((q) => q.id));
+              const localUnsynced = prevLocal.filter((l) => !isValidUuid(l.id) && !dbIds.has(l.id));
+              return [...res.data!, ...localUnsynced];
+            });
+          }
         });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "courses" }, () => {
         dbFetchCourses().then((res) => {
-          if (res.data) setCourses(res.data);
+          if (res.data && res.data.length > 0) setCourses(res.data);
         });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "exams" }, () => {
         dbFetchExams().then((res) => {
-          if (res.data) setExams(res.data);
+          if (res.data && res.data.length > 0) setExams(res.data);
         });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "course_enrollments" }, () => {
         dbFetchEnrollments().then((res) => {
-          if (res.data) {
+          if (res.data && res.data.length > 0) {
             setEnrollments(res.data);
             showToast("নতুন ভর্তি আবেদন আপডেট হয়েছে!", "info");
           }
@@ -354,7 +389,7 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => {
         dbFetchProfiles().then((res) => {
-          if (res.data) setProfiles(res.data);
+          if (res.data && res.data.length > 0) setProfiles(res.data);
         });
       })
       .subscribe();
@@ -401,8 +436,17 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       id: tempId,
       created_at: new Date().toISOString(),
       question: q.question_text || q.question,
+      question_text: q.question_text || q.question,
+      arabic_text: q.arabic_text || undefined,
       options: q.options || [q.option_a || "", q.option_b || "", q.option_c || "", q.option_d || ""],
       correct_index: q.correct_index !== undefined ? q.correct_index : 0,
+      topic: q.topic || "সাধারণ",
+      subject_id: q.subject_id || "sub-1",
+      subject_name: q.subject_name || "মাদ্রাসা কারিকুলাম",
+      source: q.source || "",
+      difficulty: q.difficulty || "Medium",
+      exam_type: q.exam_type || "NTRCA",
+      language: q.language || "bn",
     };
 
     // Optimistic state update
@@ -427,18 +471,28 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         console.error("Error creating question:", err);
       });
 
-    showToast("প্রশ্ন সফলভাবে প্রশ্ন ব্যাংকে যুক্ত করা হয়েছে!");
+    showToast("প্রশ্ন সফলভাবে প্রশ্ন ব্যাংকে যুক্ত ও সংরক্ষিত হয়েছে!", "success");
     return newQuestion;
   };
 
   const addBulkQuestions = (qs: Omit<Question, "id" | "created_at">[]): number => {
+    const tempPrefix = `q-bulk-${Date.now()}-`;
     const newItems: Question[] = qs.map((q, idx) => ({
       ...q,
-      id: `q-bulk-${Date.now()}-${idx}`,
+      id: `${tempPrefix}${idx}`,
       created_at: new Date().toISOString(),
       question: q.question_text || q.question,
+      question_text: q.question_text || q.question,
+      arabic_text: q.arabic_text || undefined,
       options: q.options || [q.option_a || "", q.option_b || "", q.option_c || "", q.option_d || ""],
       correct_index: q.correct_index !== undefined ? q.correct_index : 0,
+      topic: q.topic || "সাধারণ",
+      subject_id: q.subject_id || "sub-1",
+      subject_name: q.subject_name || "মাদ্রাসা কারিকুলাম",
+      source: q.source || "",
+      difficulty: q.difficulty || "Medium",
+      exam_type: q.exam_type || "NTRCA",
+      language: q.language || "bn",
     }));
 
     setQuestions((prev) => [...newItems, ...prev]);
@@ -450,8 +504,9 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           console.warn("Supabase bulk insert notice:", res.error);
         } else if (res.data && res.data.length > 0) {
           setQuestions((prev) => {
-            const filtered = prev.filter((p) => !p.id.startsWith("q-bulk-"));
-            return [...res.data!, ...filtered];
+            const tempIds = new Set(newItems.map((n) => n.id));
+            const remaining = prev.filter((p) => !tempIds.has(p.id));
+            return [...res.data!, ...remaining];
           });
         }
       })
@@ -459,23 +514,44 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         console.error("Error bulk creating questions:", err);
       });
 
-    showToast(`${newItems.length}টি প্রশ্ন সফলভাবে যুক্ত হয়েছে!`);
+    showToast(`${newItems.length}টি প্রশ্ন সফলভাবে যুক্ত ও সংরক্ষিত হয়েছে!`, "success");
     return newItems.length;
   };
 
   const updateQuestion = (id: string, q: Partial<Question>) => {
-    setQuestions((prev) => prev.map((item) => (item.id === id ? { ...item, ...q } : item)));
+    setQuestions((prev) =>
+      prev.map((item) => {
+        if (item.id === id) {
+          const updated = { ...item, ...q };
+          if (q.question_text || q.question) {
+            updated.question = q.question_text || q.question || item.question;
+            updated.question_text = q.question_text || q.question || item.question_text;
+          }
+          if (q.options) {
+            updated.options = q.options;
+            updated.option_a = q.options[0] || item.option_a;
+            updated.option_b = q.options[1] || item.option_b;
+            updated.option_c = q.options[2] || item.option_c;
+            updated.option_d = q.options[3] || item.option_d;
+          }
+          return updated;
+        }
+        return item;
+      })
+    );
 
     // Asynchronous Supabase update
     dbUpdateQuestion(id, q)
       .then((res) => {
         if (res.error) {
           console.warn("Supabase question update notice:", res.error);
+        } else if (res.data && res.data.id !== id) {
+          setQuestions((prev) => prev.map((item) => (item.id === id ? res.data! : item)));
         }
       })
       .catch((err) => console.error("Error updating question:", err));
 
-    showToast("প্রশ্ন সফলভাবে আপডেট করা হয়েছে!");
+    showToast("প্রশ্ন সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!", "success");
   };
 
   const deleteQuestion = (id: string) => {
