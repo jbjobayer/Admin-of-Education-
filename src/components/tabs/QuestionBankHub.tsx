@@ -17,6 +17,7 @@ import {
   ChevronUp,
   Layers,
   Copy,
+  Languages,
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import { Question, QuestionDifficulty, ExamTargetCategory } from "../../types";
@@ -37,6 +38,7 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
   const [selectedSubject, setSelectedSubject] = useState<string>("all");
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>("all");
   const [selectedExamType, setSelectedExamType] = useState<string>("all");
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("all");
   const [expandedQuestionId, setExpandedQuestionId] = useState<string | null>(null);
 
   // Filter questions
@@ -44,6 +46,7 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
     const matchesSubject = selectedSubject === "all" || q.subject_id === selectedSubject;
     const matchesDifficulty = selectedDifficulty === "all" || q.difficulty === selectedDifficulty;
     const matchesExamType = selectedExamType === "all" || q.exam_type === selectedExamType;
+    const matchesLanguage = selectedLanguage === "all" || (q.language || "bn") === selectedLanguage;
     const matchesSearch =
       !searchQuery ||
       q.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -52,12 +55,12 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
       q.subject_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (q.source && q.source.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    return matchesSubject && matchesDifficulty && matchesExamType && matchesSearch;
+    return matchesSubject && matchesDifficulty && matchesExamType && matchesLanguage && matchesSearch;
   });
 
   // Export questions to CSV
   const handleExportCSV = () => {
-    const headers = ["ID", "Subject", "Topic", "Question", "Arabic Text", "Option A", "Option B", "Option C", "Option D", "Correct Index", "Explanation", "Source", "Difficulty", "Exam Type"];
+    const headers = ["ID", "Subject", "Topic", "Question", "Arabic Text", "Option A", "Option B", "Option C", "Option D", "Correct Index", "Explanation", "Source", "Difficulty", "Exam Type", "Language"];
     const rows = filteredQuestions.map((q) => [
       q.id,
       `"${(q.subject_name || "").replace(/"/g, '""')}"`,
@@ -73,6 +76,7 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
       `"${(q.source || "").replace(/"/g, '""')}"`,
       q.difficulty,
       q.exam_type,
+      q.language || "bn",
     ]);
 
     const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
@@ -119,6 +123,7 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
                 source: cols[11] || "রেফারেন্স বই",
                 difficulty: (cols[12] as any) || "Medium",
                 exam_type: (cols[13] as any) || "NTRCA",
+                language: (cols[14] as any) || "bn",
               });
             }
           }
@@ -145,7 +150,7 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
               <span>প্রশ্ন ব্যাংক হাব (Question Bank Master Hub)</span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              আরবি হরকত (اعراب), বাংলা ও ইংরেজি প্রশ্ন তৈরি, বাল্ক ইমপোর্ট ও Gemini AI জেনারেশন
+              আরবি হরকত (اعراب), বাংলা ও ইংরেজি প্রশ্ন তৈরি, AI স্মার্ট কপি-পেস্ট ও Gemini AI জেনারেশন
             </p>
           </div>
 
@@ -168,38 +173,41 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
             </div>
             <h4 className="text-xs font-bold text-slate-800 dark:text-white">১. ম্যানুয়াল এন্ট্রি ফর্ম</h4>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-              একক প্রশ্ন, আরবি হরকত ও রেফারেন্সসহ যুক্ত করুন
+              বাংলা/ইংরেজি/আরবি হরকত ও রেফারেন্সসহ যুক্ত করুন
             </p>
           </button>
 
           {/* Method 2: Smart Bulk Parser */}
           <button
             onClick={onOpenBulkParser}
-            className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-amber-50 dark:hover:bg-amber-950/40 border border-slate-200 dark:border-slate-700 hover:border-amber-500/50 text-left transition-all group cursor-pointer"
+            className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-teal-500/10 hover:from-amber-500/20 hover:to-teal-500/20 border border-amber-500/40 text-left transition-all group cursor-pointer shadow-sm"
           >
-            <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform">
+            <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform shadow-md shadow-amber-500/30">
               <FileText className="w-5 h-5" />
             </div>
-            <h4 className="text-xs font-bold text-slate-800 dark:text-white">২. স্মার্ট বাল্ক টেক্সট পার্সার</h4>
+            <div className="flex items-center gap-1.5">
+              <h4 className="text-xs font-bold text-slate-800 dark:text-white">২. AI কপি-পেস্ট পার্সার</h4>
+              <span className="text-[9px] bg-amber-500 text-white px-1.5 py-0.2 rounded font-bold">AI</span>
+            </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-              হাতে লেখা বা কপি করা প্রশ্ন পেস্ট করে অটো-পার্স করুন
+              যেকোনো বাংলা, ইংরেজি ও আরবি টেক্সট পেস্ট করে অটো-পার্স
             </p>
           </button>
 
           {/* Method 3: Gemini AI Generator */}
           <button
             onClick={onOpenAiGenerator}
-            className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-emerald-500/10 hover:from-amber-500/20 hover:to-emerald-500/20 border border-amber-500/30 text-left transition-all group cursor-pointer shadow-sm"
+            className="p-4 rounded-2xl bg-gradient-to-br from-indigo-500/10 to-emerald-500/10 hover:from-indigo-500/20 hover:to-emerald-500/20 border border-indigo-500/30 text-left transition-all group cursor-pointer shadow-sm"
           >
-            <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform shadow-md shadow-amber-500/30">
+            <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform shadow-md shadow-indigo-600/30">
               <Sparkles className="w-5 h-5" />
             </div>
             <div className="flex items-center gap-1.5">
               <h4 className="text-xs font-bold text-slate-800 dark:text-white">৩. Gemini AI জেনারেটর</h4>
-              <span className="text-[9px] bg-amber-500 text-white px-1.5 py-0.2 rounded font-bold">PRO</span>
+              <span className="text-[9px] bg-indigo-600 text-white px-1.5 py-0.2 rounded font-bold">PRO</span>
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-              টপিক ও শ্রেণি দিলে নির্ভুল আরবি/বাংলা MCQ বানাবে
+              টপিক ও শ্রেণি অনুযায়ী বাংলা, ইংরেজি ও আরবি MCQ প্রস্তুত
             </p>
           </button>
 
@@ -250,6 +258,22 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
             </select>
           </div>
 
+          {/* Language Filter */}
+          <div className="flex items-center gap-1.5">
+            <Languages className="w-4 h-4 text-emerald-600" />
+            <select
+              value={selectedLanguage}
+              onChange={(e) => setSelectedLanguage(e.target.value)}
+              className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none cursor-pointer"
+            >
+              <option value="all">সকল ভাষা (All)</option>
+              <option value="bn">🇧🇩 বাংলা (Bengali)</option>
+              <option value="en">🇬🇧 English (ইংরেজি)</option>
+              <option value="ar">🇸🇦 العربية (Arabic)</option>
+              <option value="mixed">🌐 দ্বিভাষিক / মিশ্র</option>
+            </select>
+          </div>
+
           {/* Difficulty Filter */}
           <select
             value={selectedDifficulty}
@@ -296,6 +320,8 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
         {filteredQuestions.length > 0 ? (
           filteredQuestions.map((q, index) => {
             const isExpanded = expandedQuestionId === q.id;
+            const qLang = q.language || (q.arabic_text ? "ar" : "bn");
+
             return (
               <div
                 key={q.id}
@@ -332,16 +358,25 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
                         <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
                           {q.exam_type}
                         </span>
+                        {/* Language Tag */}
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                          {qLang === "ar" ? "🇸🇦 العربية" : qLang === "en" ? "🇬🇧 English" : qLang === "mixed" ? "🌐 মিশ্র" : "🇧🇩 বাংলা"}
+                        </span>
                       </div>
 
-                      {/* Main Question Text (Bangla) */}
-                      <h3 className="text-base font-bold text-slate-900 dark:text-white leading-relaxed">
+                      {/* Main Question Text */}
+                      <h3
+                        className={`text-base font-bold text-slate-900 dark:text-white leading-relaxed ${
+                          qLang === "ar" ? "font-arabic text-lg" : ""
+                        }`}
+                        dir={qLang === "ar" ? "rtl" : "ltr"}
+                      >
                         {q.question}
                       </h3>
 
                       {/* Arabic Text with Harakat (if present) */}
                       {q.arabic_text && (
-                        <div className="p-3 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-900/50 font-arabic text-xl text-emerald-950 dark:text-emerald-200 leading-loose">
+                        <div className="p-3 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-900/50 font-arabic text-xl text-emerald-950 dark:text-emerald-200 leading-loose" dir="rtl">
                           {q.arabic_text}
                         </div>
                       )}
@@ -350,7 +385,7 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
                         {q.options.map((opt, optIdx) => {
                           const isCorrect = q.correct_index === optIdx;
-                          const banglaLetters = ["ক", "খ", "গ", "ঘ"];
+                          const optionLabels = qLang === "ar" ? ["أ", "ب", "ج", "د"] : qLang === "en" ? ["A", "B", "C", "D"] : ["ক", "খ", "গ", "ঘ"];
                           return (
                             <div
                               key={optIdx}
@@ -367,9 +402,9 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
                                     : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400"
                                 }`}
                               >
-                                {banglaLetters[optIdx]}
+                                {optionLabels[optIdx]}
                               </span>
-                              <span className="truncate flex-1">{opt}</span>
+                              <span className={`truncate flex-1 ${qLang === "ar" ? "font-arabic text-sm" : ""}`} dir={qLang === "ar" ? "rtl" : "ltr"}>{opt}</span>
                               {isCorrect && (
                                 <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
                               )}
@@ -443,6 +478,12 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
             </p>
             <div className="mt-4 flex items-center justify-center gap-3">
               <button
+                onClick={onOpenBulkParser}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md cursor-pointer"
+              >
+                AI দিয়ে টেক্সট পেস্ট করুন
+              </button>
+              <button
                 onClick={onOpenAiGenerator}
                 className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-md cursor-pointer"
               >
@@ -453,6 +494,7 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
                   setSelectedSubject("all");
                   setSelectedDifficulty("all");
                   setSelectedExamType("all");
+                  setSelectedLanguage("all");
                   setSearchQuery("");
                 }}
                 className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer"

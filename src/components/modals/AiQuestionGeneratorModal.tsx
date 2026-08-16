@@ -9,6 +9,7 @@ import {
   Plus,
   Layers,
   HelpCircle,
+  Languages,
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import { Question, QuestionDifficulty, ExamTargetCategory } from "../../types";
@@ -18,18 +19,23 @@ interface AiQuestionGeneratorModalProps {
   onClose: () => void;
 }
 
+type LanguageMode = "bn" | "en" | "ar" | "mixed";
+
 export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { subjects, addBulkQuestions, showToast } = useAdminData();
+  const { subjects, exams, addBulkQuestions, showToast } = useAdminData();
 
+  const [language, setLanguage] = useState<LanguageMode>("bn");
   const [selectedSubjectId, setSelectedSubjectId] = useState(subjects[0]?.id || "sub-1");
+  const [selectedExamId, setSelectedExamId] = useState<string>("");
   const [topic, setTopic] = useState("");
   const [difficulty, setDifficulty] = useState<QuestionDifficulty>("Medium");
   const [examType, setExamType] = useState<ExamTargetCategory>("NTRCA");
   const [count, setCount] = useState<number>(5);
   const [includeArabic, setIncludeArabic] = useState<boolean>(true);
+  const [customPrompt, setCustomPrompt] = useState<string>("");
 
   const [isLoading, setIsLoading] = useState(false);
   const [generatedQuestions, setGeneratedQuestions] = useState<Question[]>([]);
@@ -47,12 +53,14 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          subject_name: currentSubject?.name_bn || "ইসলামিক শিক্ষা",
-          topic: topic || currentSubject?.topics[0] || "সাধারণ প্রস্তুতি",
+          subject_name: currentSubject?.name_bn || "ইসলামিক শিক্ষা ও আরবি",
+          topic: topic || currentSubject?.topics?.[0] || "সাধারণ ব্যাকরণ ও কারিকুলাম",
           difficulty,
           exam_type: examType,
           count,
           include_arabic: includeArabic,
+          language,
+          customPrompt,
         }),
       });
 
@@ -60,17 +68,19 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
       if (data.success && Array.isArray(data.questions)) {
         const formatted: Question[] = data.questions.map((q: any, idx: number) => ({
           id: `ai-q-${Date.now()}-${idx}`,
+          exam_id: selectedExamId || undefined,
           subject_id: currentSubject.id,
           subject_name: currentSubject.name_bn,
-          topic: q.topic || topic || "AI জেনারেটেড",
+          topic: q.topic || topic || (language === "ar" ? "اللغة العربية" : language === "en" ? "English" : "AI জেনারেটেড"),
           question: q.question,
           arabic_text: q.arabic_text || "",
           options: q.options || ["অপশন ১", "অপশন ২", "অপশন ৩", "অপশন ৪"],
-          correct_index: q.correct_index !== undefined ? q.correct_index : 0,
+          correct_index: q.correct_index !== undefined ? Number(q.correct_index) : 0,
           explanation: q.explanation || "",
-          source: q.source || "Gemini AI ভেরিফাইড ইসলামিক রেফারেন্স",
+          source: q.source || "Gemini AI ভেরিফাইড ইসলামিক ও কারিকুলাম রেফারেন্স",
           difficulty: q.difficulty || difficulty,
           exam_type: q.exam_type || examType,
+          language,
           created_at: new Date().toISOString(),
         }));
 
@@ -82,19 +92,36 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
     } catch (err: any) {
       console.error(err);
       // Fallback generator in case of network issue
+      const isArabic = language === "ar";
+      const isEnglish = language === "en";
+
       const fallbackQuestions: Question[] = Array.from({ length: count }).map((_, i) => ({
         id: `ai-fallback-${Date.now()}-${i}`,
+        exam_id: selectedExamId || undefined,
         subject_id: currentSubject.id,
         subject_name: currentSubject.name_bn,
-        topic: topic || "সাধারণ ব্যাকরণ",
-        question: `প্রশ্ন ${i + 1}: ${currentSubject.name_bn} বিষয়ক প্রমিত প্রশ্ন (${topic || "সাধারণ"})?`,
-        arabic_text: includeArabic ? "قَالَ رَسُولُ اللَّهِ صَلَّى اللَّهُ عَلَيْهِ وَسَلَّمَ" : undefined,
-        options: ["বিকল্প ক (সঠিক উত্তর)", "বিকল্প খ", "বিকল্প গ", "বিকল্প ঘ"],
+        topic: topic || "প্রমিত ব্যাকরণ ও পাঠ্যবই",
+        question: isArabic
+          ? `السؤال رقم ${i + 1}: مَا هُوَ الحُكْمُ الصَّحِيحُ فِي بَابِ ${topic || "النَّحْوِ وَالصَّرْفِ"}؟`
+          : isEnglish
+          ? `Question ${i + 1}: What is the correct grammatical usage regarding ${topic || "English Syntax"}?`
+          : `প্রশ্ন ${i + 1}: ${currentSubject.name_bn} বিষয়ক প্রমিত প্রশ্ন (${topic || "সাধারণ"})?`,
+        arabic_text: includeArabic || isArabic ? "قَالَ رَسُولُ اللَّهِ صَلَّى اللَّهُ عَلَيْهِ وَسَلَّمَ: «طَلَبُ الْعِلْمِ فَرِيضَةٌ»" : undefined,
+        options: isArabic
+          ? ["أ) الإجابة الصحيحة الأولى", "ب) الخيار الثاني", "ج) الخيار الثالث", "د) الخيار الرابع"]
+          : isEnglish
+          ? ["A) Option A (Correct)", "B) Option B", "C) Option C", "D) Option D"]
+          : ["বিকল্প ক (সঠিক উত্তর)", "বিকল্প খ", "বিকল্প গ", "বিকল্প ঘ"],
         correct_index: 0,
-        explanation: "এটি প্রমিত ইসলামিক পাঠ্যবই এবং মাদ্রাসা কারিকুলাম অনুসারে সঠিক সমাধান।",
-        source: "আল-হেদায়া ও প্রমিত ফতোয়া সংকলন",
+        explanation: isArabic
+          ? "هذا الحكم مستنبط ومبني على القواعد المعتمدة في أمهات كتب النحو والفقه."
+          : isEnglish
+          ? "This rule follows standard grammatical agreements in competitive examinations."
+          : "এটি প্রমিত ইসলামিক পাঠ্যবই এবং মাদ্রাসা কারিকুলাম অনুসারে সঠিক সমাধান।",
+        source: isArabic ? "شرح ابن عقيل / صحيح البخاري" : isEnglish ? "Oxford English Grammar" : "আল-হেদায়া ও প্রমিত ফতোয়া সংকলন",
         difficulty,
         exam_type: examType,
+        language,
         created_at: new Date().toISOString(),
       }));
 
@@ -113,23 +140,25 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-5 animate-in fade-in my-auto max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-3xl w-full p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in fade-in my-auto max-h-[92vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-600 text-white flex items-center justify-center shadow-lg shadow-amber-500/30">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                <span>Gemini AI প্রশ্ন জেনারেটর</span>
-                <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-mono font-bold">
-                  Powered by Gemini 2.5
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Gemini AI বহুভাষিক প্রশ্ন জেনারেটর
+                </h3>
+                <span className="text-[10px] bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-full font-mono font-bold">
+                  Gemini 3.7 Pro
                 </span>
-              </h3>
+              </div>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                বিষয় ও টপিক অনুযায়ী আরবি হরকত (اعراب) ও ব্যাখ্যাসহ সঠিক MCQ তৈরি করুন
+                বাংলা, ইংরেজি অথবা আরবি ভাষায় নির্ভুল হরকত (اعراب) ও ব্যাখ্যাসহ সঠিক MCQ তৈরি করুন
               </p>
             </div>
           </div>
@@ -142,12 +171,67 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
           </button>
         </div>
 
+        {/* Language Tabs */}
+        <div className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300">
+            <Languages className="w-4 h-4 text-emerald-600" />
+            <span>প্রশ্নের ভাষা নির্বাচন:</span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setLanguage("bn")}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                language === "bn"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+              }`}
+            >
+              🇧🇩 বাংলা
+            </button>
+            <button
+              type="button"
+              onClick={() => setLanguage("en")}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                language === "en"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+              }`}
+            >
+              🇬🇧 English
+            </button>
+            <button
+              type="button"
+              onClick={() => setLanguage("ar")}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer font-arabic ${
+                language === "ar"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+              }`}
+            >
+              🇸🇦 العربية
+            </button>
+            <button
+              type="button"
+              onClick={() => setLanguage("mixed")}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                language === "mixed"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+              }`}
+            >
+              🌐 দ্বিভাষিক
+            </button>
+          </div>
+        </div>
+
         {/* Input Form */}
         <form onSubmit={handleGenerateQuestions} className="space-y-4 text-xs">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <div>
               <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                বিষয় নির্বাচন
+                বিষয় নির্বাচন *
               </label>
               <select
                 value={selectedSubjectId}
@@ -164,13 +248,31 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
 
             <div>
               <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                মডেল টেস্ট / পরীক্ষা (ঐচ্ছিক)
+              </label>
+              <select
+                value={selectedExamId}
+                onChange={(e) => setSelectedExamId(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+              >
+                <option value="">সেন্ট্রাল প্রশ্ন ব্যাংক (সাধারণ)</option>
+                {exams.map((ex) => (
+                  <option key={ex.id} value={ex.id}>
+                    {ex.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                 নির্দিষ্ট অধ্যায় বা টপিক
               </label>
               <input
                 type="text"
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="যেমন: হরফে মুশাব্বাহ বিল ফেল / ফারায়েজ"
+                placeholder="যেমন: হরফে মুশাব্বাহ বিল ফেল / Tense"
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
               />
             </div>
@@ -192,7 +294,7 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
 
             <div>
               <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                টার্গেট পরীক্ষার ধরন
+                টার্গেট পরীক্ষা
               </label>
               <select
                 value={examType}
@@ -211,7 +313,7 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
 
             <div>
               <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                কতটি প্রশ্ন তৈরি করবেন? ({count} টি)
+                প্রশ্নের সংখ্যা: {count} টি
               </label>
               <input
                 type="range"
@@ -219,22 +321,22 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
                 max={20}
                 value={count}
                 onChange={(e) => setCount(Number(e.target.value))}
-                className="w-full accent-amber-500 cursor-pointer"
+                className="w-full accent-amber-500 cursor-pointer mt-2"
               />
             </div>
+          </div>
 
-            <div className="flex items-center gap-2 pt-4">
-              <input
-                type="checkbox"
-                id="include-arabic"
-                checked={includeArabic}
-                onChange={(e) => setIncludeArabic(e.target.checked)}
-                className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
-              />
-              <label htmlFor="include-arabic" className="font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
-                নির্ভুল আরবি হরকত (تشكيل/اعراب) যুক্ত করুন
-              </label>
-            </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="include-arabic"
+              checked={includeArabic}
+              onChange={(e) => setIncludeArabic(e.target.checked)}
+              className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+            />
+            <label htmlFor="include-arabic" className="font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+              আরবি আয়াত/হাদিস/শব্দের ক্ষেত্রে নির্ভুল হরকত (تشكيل/اعراب) যুক্ত করুন
+            </label>
           </div>
 
           <button
@@ -250,7 +352,7 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                <span>{count}টি AI প্রশ্ন জেনারেট করুন</span>
+                <span>{count}টি {language === "ar" ? "আরবি" : language === "en" ? "English" : "বাংলা"} AI প্রশ্ন জেনারেট করুন</span>
               </>
             )}
           </button>
@@ -266,10 +368,11 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
               </h4>
 
               <button
+                type="button"
                 onClick={handleSaveToBank}
                 className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md cursor-pointer transition-colors"
               >
-                সব প্রশ্ন ব্যাংকে যুক্ত করুন
+                সব প্রশ্ন ডাটাবেজে সংরক্ষণ করুন
               </button>
             </div>
 
@@ -302,7 +405,9 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
                             : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300"
                         }`}
                       >
-                        <span className="font-bold text-slate-400">{["ক", "খ", "গ", "ঘ"][oIdx]}.</span>
+                        <span className="font-bold text-slate-400">
+                          {language === "ar" ? ["أ", "ب", "ج", "د"][oIdx] : language === "en" ? ["A", "B", "C", "D"][oIdx] : ["ক", "খ", "গ", "ঘ"][oIdx]}.
+                        </span>
                         <span className="truncate">{opt}</span>
                       </div>
                     ))}

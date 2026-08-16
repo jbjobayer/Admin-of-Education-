@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { X, CheckCircle2, BookOpen, Sparkles, Layers } from "lucide-react";
+import { X, CheckCircle2, BookOpen, Sparkles, Layers, Languages } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import { Question, QuestionDifficulty, ExamTargetCategory } from "../../types";
 
@@ -9,6 +9,22 @@ interface QuestionFormModalProps {
   questionToEdit?: Question | null;
 }
 
+type LanguageMode = "bn" | "en" | "ar" | "mixed";
+type OptionPrefixStyle = "bn" | "en" | "ar";
+
+const ARABIC_HARAKAT = [
+  { label: "َ (ফাতহা/জবর)", char: "َ" },
+  { label: "ُ (দম্মা/পেশ)", char: "ُ" },
+  { label: "ِ (কাসরা/জের)", char: "ِ" },
+  { label: "ً (তানভীন ফাতহা)", char: "ً" },
+  { label: "ٌ (তানভীন দম্মা)", char: "ٌ" },
+  { label: "ٍ (তানভীন কাসরা)", char: "ٍ" },
+  { label: "ّ (তাশদীদ)", char: "ّ" },
+  { label: "ْ (সুকুন/জযম)", char: "ْ" },
+  { label: "ـ (কাশীদা/টান)", char: "ـ" },
+  { label: "ٰ (খাড়া জবর)", char: "ٰ" },
+];
+
 export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
   isOpen,
   onClose,
@@ -16,6 +32,8 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
 }) => {
   const { subjects, exams, addQuestion, updateQuestion, showToast } = useAdminData();
 
+  const [language, setLanguage] = useState<LanguageMode>("bn");
+  const [optionStyle, setOptionStyle] = useState<OptionPrefixStyle>("bn");
   const [examId, setExamId] = useState<string>(exams[0]?.id || "");
   const [subjectId, setSubjectId] = useState(subjects[0]?.id || "sub-1");
   const [topic, setTopic] = useState("");
@@ -33,6 +51,7 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
 
   useEffect(() => {
     if (questionToEdit) {
+      setLanguage((questionToEdit.language as LanguageMode) || "bn");
       setExamId(questionToEdit.exam_id || exams[0]?.id || "");
       setSubjectId(questionToEdit.subject_id);
       setTopic(questionToEdit.topic || "");
@@ -48,6 +67,8 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
       setDifficulty(questionToEdit.difficulty || "Medium");
       setExamType(questionToEdit.exam_type || "NTRCA");
     } else {
+      setLanguage("bn");
+      setOptionStyle("bn");
       setExamId(exams[0]?.id || "");
       setSubjectId(subjects[0]?.id || "sub-1");
       setTopic("");
@@ -68,6 +89,11 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
   if (!isOpen) return null;
 
   const currentSubject = subjects.find((s) => s.id === subjectId) || subjects[0];
+
+  const handleInsertHarakat = (char: string) => {
+    // Insert harakat to arabic text field
+    setArabicText((prev) => prev + char);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,9 +120,10 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
       correct_index: correctIndex,
       correct_option: optMap[correctIndex] || "option_a",
       explanation: explanation.trim(),
-      source: source.trim() || "মাদ্রাসা পাঠ্যবই ও রেফারেন্স",
+      source: source.trim() || (language === "ar" ? "المناهج المعتمدة" : language === "en" ? "Curriculum Reference" : "মাদ্রাসা পাঠ্যবই ও রেফারেন্স"),
       difficulty,
       exam_type: examType,
+      language,
     };
 
     if (questionToEdit) {
@@ -108,9 +135,11 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
     onClose();
   };
 
+  const optLabels = optionStyle === "ar" ? ["أ", "ب", "ج", "د"] : optionStyle === "en" ? ["A", "B", "C", "D"] : ["ক", "খ", "গ", "ঘ"];
+
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in fade-in my-auto max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-3xl w-full p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in fade-in my-auto max-h-[92vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
           <div>
@@ -118,7 +147,7 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
               {questionToEdit ? "প্রশ্ন সম্পাদনা করুন (Edit Question)" : "নতুন প্রশ্ন তৈরি (Create Question)"}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              আরবি হরকত, ৪টি বিকল্প, সঠিক উত্তর ও প্রামাণিক ব্যাখ্যা প্রদান করুন
+              বাংলা, ইংরেজি ও আরবি অপশন এবং হরকতসহ নির্ভুল MCQ যুক্ত করুন
             </p>
           </div>
 
@@ -128,6 +157,94 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
           >
             <X className="w-5 h-5" />
           </button>
+        </div>
+
+        {/* Language & Option Style Selector */}
+        <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300">
+            <Languages className="w-4 h-4 text-emerald-600" />
+            <span>ভাষা ও অপশন শৈলী:</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Language Selection */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setLanguage("bn");
+                  setOptionStyle("bn");
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  language === "bn"
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                }`}
+              >
+                বাংলা
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLanguage("en");
+                  setOptionStyle("en");
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  language === "en"
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                }`}
+              >
+                English
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLanguage("ar");
+                  setOptionStyle("ar");
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer font-arabic ${
+                  language === "ar"
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                }`}
+              >
+                العربية
+              </button>
+            </div>
+
+            {/* Option Style */}
+            <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2">
+              <span className="text-[10px] text-slate-500 font-semibold">অপশন:</span>
+              <button
+                type="button"
+                onClick={() => setOptionStyle("bn")}
+                className={`px-2 py-0.5 rounded text-[11px] font-bold border transition-all ${
+                  optionStyle === "bn" ? "bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-900" : "bg-white dark:bg-slate-700 border-slate-200 text-slate-600"
+                }`}
+              >
+                ক-ঘ
+              </button>
+              <button
+                type="button"
+                onClick={() => setOptionStyle("en")}
+                className={`px-2 py-0.5 rounded text-[11px] font-bold border transition-all ${
+                  optionStyle === "en" ? "bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-900" : "bg-white dark:bg-slate-700 border-slate-200 text-slate-600"
+                }`}
+              >
+                A-D
+              </button>
+              <button
+                type="button"
+                onClick={() => setOptionStyle("ar")}
+                className={`px-2 py-0.5 rounded text-[11px] font-bold border transition-all font-arabic ${
+                  optionStyle === "ar" ? "bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-900" : "bg-white dark:bg-slate-700 border-slate-200 text-slate-600"
+                }`}
+              >
+                أ-د
+              </button>
+            </div>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
@@ -175,7 +292,7 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
                 type="text"
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="যেমন: নহুমীর / কাফিয়া / ফিকহুল আকবর"
+                placeholder="যেমন: নহুমীর / Tense / ফিকহ"
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
               />
             </div>
@@ -183,19 +300,22 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
 
           <div>
             <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-              মূল প্রশ্ন (বাংলা) *
+              মূল প্রশ্ন ({language === "ar" ? "العربية" : language === "en" ? "English" : "বাংলা"}) *
             </label>
             <textarea
               rows={2}
               value={questionText}
               onChange={(e) => setQuestionText(e.target.value)}
               placeholder="প্রশ্নটি এখানে টাইপ করুন..."
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium leading-relaxed"
+              className={`w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium leading-relaxed ${
+                language === "ar" ? "font-arabic text-right text-sm" : ""
+              }`}
+              dir={language === "ar" ? "rtl" : "ltr"}
               required
             />
           </div>
 
-          {/* Arabic Text (Optional) with live Harakat preview */}
+          {/* Arabic Text (Optional) with live Harakat Toolbar */}
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="font-bold text-slate-700 dark:text-slate-300">
@@ -205,12 +325,30 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
                 UTF-8 Arabic Supported
               </span>
             </div>
+
+            {/* Quick Harakat Toolbar */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-1.5 p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+              <span className="text-[10px] font-bold text-slate-500 px-1">হরকত টুলবার:</span>
+              {ARABIC_HARAKAT.map((h, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => handleInsertHarakat(h.char)}
+                  className="w-7 h-7 rounded-lg bg-white dark:bg-slate-700 hover:bg-emerald-100 dark:hover:bg-emerald-950 font-arabic text-base font-bold text-emerald-800 dark:text-emerald-300 flex items-center justify-center border border-slate-200 dark:border-slate-600 transition-colors shadow-xs"
+                  title={h.label}
+                >
+                  {h.char}
+                </button>
+              ))}
+            </div>
+
             <input
               type="text"
               value={arabicText}
               onChange={(e) => setArabicText(e.target.value)}
               placeholder="مثال: إِنَّمَا الْأَعْمَالُ بِالنِّيَّاتِ"
               className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-arabic text-base"
+              dir="rtl"
             />
             {arabicText && (
               <div className="mt-2 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-right font-arabic text-lg text-emerald-900 dark:text-emerald-200 leading-loose">
@@ -222,14 +360,14 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
           {/* 4 Options Grid */}
           <div>
             <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-              ৪টি অপশন ও সঠিক উত্তর নির্ধারণ করুন *
+              ৪টি বিকল্প ও সঠিক উত্তর নির্ধারণ করুন * (ক্লিক করে সঠিক উত্তর মার্ক করুন)
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {[
-                { label: "ক", val: optionA, set: setOptionA, idx: 0 },
-                { label: "খ", val: optionB, set: setOptionB, idx: 1 },
-                { label: "গ", val: optionC, set: setOptionC, idx: 2 },
-                { label: "ঘ", val: optionD, set: setOptionD, idx: 3 },
+                { label: optLabels[0], val: optionA, set: setOptionA, idx: 0 },
+                { label: optLabels[1], val: optionB, set: setOptionB, idx: 1 },
+                { label: optLabels[2], val: optionC, set: setOptionC, idx: 2 },
+                { label: optLabels[3], val: optionD, set: setOptionD, idx: 3 },
               ].map((opt) => (
                 <div
                   key={opt.idx}
@@ -257,7 +395,10 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
                     value={opt.val}
                     onChange={(e) => opt.set(e.target.value)}
                     placeholder={`অপশন ${opt.label}`}
-                    className="w-full bg-transparent border-none focus:outline-none text-slate-900 dark:text-white font-medium text-xs"
+                    className={`w-full bg-transparent border-none focus:outline-none text-slate-900 dark:text-white font-medium text-xs ${
+                      language === "ar" ? "font-arabic text-right" : ""
+                    }`}
+                    dir={language === "ar" ? "rtl" : "ltr"}
                     required={opt.idx < 2}
                   />
 

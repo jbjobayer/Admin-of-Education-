@@ -50,6 +50,7 @@ export interface Question {
   difficulty: QuestionDifficulty;
   exam_type: ExamTargetCategory;
   tags?: string[];
+  language?: "bn" | "en" | "ar" | "mixed";
 }
 
 export type ExamCategory = "free_test" | "daily_live" | "weekly_model_test" | "monthly_mega" | "premium_ntrca" | "model_test" | "daily_test" | "chapter_test" | "full_test" | "live_exam";
