@@ -28,6 +28,40 @@ function getGeminiClient(): GoogleGenAI | null {
   });
 }
 
+// Helper to safely extract JSON from Gemini text output
+function extractJsonFromGeminiResponse(rawText: string | undefined): any {
+  if (!rawText || !rawText.trim()) return [];
+  let cleaned = rawText.trim();
+  // Remove markdown fences like ```json ... ``` or ``` ... ```
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
+  // Try direct parse first
+  try {
+    return JSON.parse(cleaned);
+  } catch (_err) {
+    // Attempt regex extraction for JSON Array [...] or Object {...}
+    const arrayMatch = cleaned.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    if (arrayMatch) {
+      try {
+        return JSON.parse(arrayMatch[0]);
+      } catch (_inner) {
+        // continue
+      }
+    }
+    const objMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+      try {
+        const parsed = JSON.parse(objMatch[0]);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch (_inner) {
+        // continue
+      }
+    }
+    console.error("Failed to parse Gemini JSON output:", cleaned);
+    throw new Error("AI মডেল থেকে সঠিক JSON ফরম্যাট পাওয়া যায়নি। অনুগ্রহ করে পুনরায় চেষ্টা করুন।");
+  }
+}
+
 // Health check endpoint
 app.get("/api/health", (_req, res) => {
   res.json({
@@ -38,7 +72,7 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// AI Question Generator Endpoint (Gemini Powered - Multilingual: Bangla, English, Arabic)
+// AI Question Generator Endpoint (Gemini 3.7 Flash - Multilingual: Bangla, English, Arabic)
 app.post("/api/gemini/generate-questions", async (req, res) => {
   try {
     const {
@@ -56,14 +90,16 @@ app.post("/api/gemini/generate-questions", async (req, res) => {
       customPrompt = "",
     } = req.body;
 
-    const currentSubject = subject || subject_name || "ইসলামিক স্টাডিজ ও ব্যাকরণ";
-    const currentExamType = examType || exam_type || "NTRCA";
-    const shouldIncludeArabic = includeArabic ?? include_arabic ?? true;
+    const currentSubject = (subject_name || subject || "").trim() || "ইসলামিক স্টাডিজ ও মাদ্রাসা কারিকুলাম";
+    const currentTopic = (topic || "").trim() || "সাধারণ পাঠ্যক্রম ও ব্যাকরণ";
+    const currentExamType = exam_type || examType || "NTRCA";
+    const shouldIncludeArabic = include_arabic ?? includeArabic ?? true;
+    const qCount = Math.min(Math.max(Number(count) || 5, 1), 25);
 
     const ai = getGeminiClient();
     if (!ai) {
       return res.status(503).json({
-        error: "Gemini API key is not configured. Please configure GEMINI_API_KEY in the Settings > Secrets panel.",
+        error: "Gemini API key is not configured in the environment. Please add GEMINI_API_KEY in the Settings > Secrets panel.",
       });
     }
 
@@ -71,12 +107,12 @@ app.post("/api/gemini/generate-questions", async (req, res) => {
     if (language === "ar") {
       languageInstructions = `CRITICAL LANGUAGE REQUIREMENT: ALL questions, options, and explanations MUST be written in classical Arabic (الفصحى).
 - Include complete Harakat/Tashkeel/I'rab (مع التشكيل الكامل وضبط الإعراب) in the 'question', 'arabic_text', and 'options'.
-- Provide options in Arabic terminology. Option labels: أ, ب, ج, د.
-- Include accurate reference to authentic Islamic / Arabic grammar sources (e.g. شرح ابن عقيل, الكافية, صحيح البخاري, تفسير القرطبي).`;
+- Provide 4 distinct options in Arabic.
+- Reference authentic classical books (e.g. شرح ابن عقيل, الكافية, صحيح البخاري, تفسير القرطبي, فتح القدير).`;
     } else if (language === "en") {
       languageInstructions = `CRITICAL LANGUAGE REQUIREMENT: ALL questions, options, and explanations MUST be written in English.
 - Target competitive examinations (e.g. NTRCA English, BCS English, General Grammar, Vocabulary, Literature, Comprehension).
-- Options MUST be 4 distinct English choices with clear labels (A, B, C, D) or clean text.
+- Options MUST be 4 distinct English choices with clear text.
 - Explanations MUST clearly explain the grammatical rules, idioms, or contextual meaning in English.`;
     } else if (language === "mixed") {
       languageInstructions = `CRITICAL LANGUAGE REQUIREMENT: Bilingual / Mixed format (Bengali + Arabic text with full Harakat / English).
@@ -89,34 +125,31 @@ ${shouldIncludeArabic ? "- For Islamic Studies, Quran, Hadith, Fiqh, Nahu, Sarf,
 - Options in Bengali with proper formatting.`;
     }
 
-    const promptText = `You are a senior curriculum specialist and question author for competitive examinations in Bangladesh (NTRCA, Madrasah Board Dakhil/Alim/Fazil/Kamil, BCS, and Primary).
-Generate exactly ${count} multiple choice questions (MCQs) for:
-- Subject: ${currentSubject}
-- Topic: ${topic || "General Curriculum Syllabus"}
-- Difficulty: ${difficulty} (Easy / Medium / Hard)
-- Exam Target: ${currentExamType}
-- Target Language: ${language}
-${languageInstructions}
-${customPrompt ? `- Additional specific instruction: ${customPrompt}` : ""}
+    const promptText = `You are a senior curriculum specialist and question author for competitive examinations in Bangladesh (NTRCA 18th/19th Teacher Registration, Madrasah Board Dakhil/Alim/Fazil/Kamil, BCS, and Primary).
 
-For each question, provide:
-1. question: Question text in the specified language (${language})
-2. arabic_text: Relevant Arabic Ayah, Hadith, or Arabic phrase with full Harakat/I'rab (or empty string if not applicable)
-3. options: Array of exactly 4 options
-4. correct_index: Integer 0, 1, 2, or 3 corresponding to the correct option in options array
-5. explanation: Clear explanation in the specified language with authentic reference
-6. source: Authentic book/reference name
-7. difficulty: "${difficulty}"
-8. subject: "${currentSubject}"
-9. topic: "${topic || currentSubject}"
-10. language: "${language}"`;
+Generate exactly ${qCount} high-quality, authentic Multiple Choice Questions (MCQs) strictly on:
+- Subject: "${currentSubject}"
+- Specific Topic / Chapter: "${currentTopic}"
+- Exam Target: "${currentExamType}"
+- Difficulty Level: "${difficulty}" (Easy / Medium / Hard)
+- Language: "${language}"
+
+CRITICAL TOPICAL RULES:
+1. Every single question MUST directly test knowledge of the given Topic: "${currentTopic}".
+2. Provide exactly 4 plausible options for each question, where exactly one is definitively correct.
+3. 'correct_index' must be an integer (0 for option 1, 1 for option 2, 2 for option 3, 3 for option 4).
+4. Provide a clear, educational 'explanation' citing authentic textbook or primary sources in 'source'.
+5. If the question deals with Arabic texts (Quran, Hadith, Nahu, Sarf, Balaghat, Fiqh), provide the exact Arabic excerpt with FULL Harakat/Tashkeel in 'arabic_text'.
+
+${languageInstructions}
+${customPrompt ? `Additional user custom requirement: ${customPrompt}` : ""}`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.7-flash",
       contents: promptText,
       config: {
         systemInstruction:
-          "You are an expert multilingual exam question creator. Always provide authentic, precise questions with verified answers, clear explanations, and proper Arabic diacritics when relevant.",
+          "You are an expert multilingual exam question creator. Always provide authentic, precise questions strictly tailored to the requested topic and subject with verified answers, clear explanations, and proper Arabic diacritics when relevant.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -128,7 +161,7 @@ For each question, provide:
               options: {
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
-                description: "Array of 4 options",
+                description: "Array of exactly 4 options",
               },
               correct_index: {
                 type: Type.INTEGER,
@@ -147,9 +180,20 @@ For each question, provide:
       },
     });
 
-    const jsonText = response.text || "[]";
-    const questions = JSON.parse(jsonText);
-    return res.json({ success: true, count: questions.length, questions });
+    const parsedQuestions = extractJsonFromGeminiResponse(response.text);
+    const formattedQuestions = (Array.isArray(parsedQuestions) ? parsedQuestions : [parsedQuestions]).map((q: any) => ({
+      ...q,
+      subject: q.subject || currentSubject,
+      topic: q.topic || currentTopic,
+      difficulty: q.difficulty || difficulty,
+      language: q.language || language,
+    }));
+
+    return res.json({
+      success: true,
+      count: formattedQuestions.length,
+      questions: formattedQuestions,
+    });
   } catch (error: any) {
     console.error("Gemini Question Generation Error:", error);
     return res.status(500).json({
@@ -158,20 +202,22 @@ For each question, provide:
   }
 });
 
-// Smart Bulk Text Parser Endpoint (Gemini Powered - Multilingual: Bangla, English, Arabic)
-app.post("/api/gemini/parse-raw-text", async (req, res) => {
+// Shared Bulk Text Parser Handler
+async function handleParseRawText(req: express.Request, res: express.Response) {
   try {
     const {
       rawText,
       raw_text,
       defaultSubject,
       subject_name,
+      topic,
       language = "auto", // "auto" | "bn" | "en" | "ar" | "mixed"
       optionsFormat = "auto", // "auto" | "bn" | "en" | "ar"
     } = req.body;
 
     const textToParse = rawText || raw_text;
-    const currentSubject = defaultSubject || subject_name || "ইসলামিক স্টাডিজ ও সাধারণ বিষয়";
+    const currentSubject = (subject_name || defaultSubject || "").trim() || "ইসলামিক স্টাডিজ ও সাধারণ বিষয়";
+    const currentTopic = (topic || "").trim() || "সাধারণ";
 
     if (!textToParse || !textToParse.trim()) {
       return res.status(400).json({ error: "Raw text is required for parsing" });
@@ -194,10 +240,11 @@ Supported Languages in input:
 Instructions:
 - Extract every single question accurately.
 - For Arabic text or Quranic verses/Hadiths/grammar rules, preserve complete Harakat/Diacritics (اعراب / تشكيل). If the question is in Arabic or has an Arabic part, put the Arabic passage in 'arabic_text'.
-- Extract exactly 4 clean options (strip option markers like (ক), A., 1., أ) from the option text or format cleanly).
+- Extract exactly 4 clean options (strip option markers like (ক), A., 1., أ) from the option text.
 - Determine the correct answer index: 0 for 1st option (A/ক/أ), 1 for 2nd option (B/খ/ب), 2 for 3rd option (C/গ/ج), 3 for 4th option (D/ঘ/د).
 - If explanation or source is present in text, extract it. If not, generate a brief authentic 1-line explanation and reference.
 - Default Subject: ${currentSubject}
+- Default Topic: ${currentTopic}
 - Target Language Hint: ${language}
 
 Raw Text to parse:
@@ -237,16 +284,29 @@ ${textToParse}
       },
     });
 
-    const jsonText = response.text || "[]";
-    const questions = JSON.parse(jsonText);
-    return res.json({ success: true, count: questions.length, questions });
+    const parsedQuestions = extractJsonFromGeminiResponse(response.text);
+    const formattedQuestions = (Array.isArray(parsedQuestions) ? parsedQuestions : [parsedQuestions]).map((q: any) => ({
+      ...q,
+      subject: q.subject || currentSubject,
+      topic: q.topic || currentTopic,
+    }));
+
+    return res.json({
+      success: true,
+      count: formattedQuestions.length,
+      questions: formattedQuestions,
+    });
   } catch (error: any) {
     console.error("Gemini Raw Text Parser Error:", error);
     return res.status(500).json({
       error: error.message || "Failed to parse text with AI",
     });
   }
-});
+}
+
+// Smart Bulk Text Parser Endpoints (Both paths supported)
+app.post("/api/gemini/parse-raw-text", handleParseRawText);
+app.post("/api/gemini/parse-bulk-questions", handleParseRawText);
 
 // Start the Express server with Vite middleware
 async function startServer() {
