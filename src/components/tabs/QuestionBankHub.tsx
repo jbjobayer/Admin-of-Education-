@@ -36,14 +36,26 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
   const { questions, subjects, deleteQuestion, addBulkQuestions, showToast, searchQuery, setSearchQuery } = useAdminData();
 
   const [selectedSubject, setSelectedSubject] = useState<string>("all");
+  const [selectedTopic, setSelectedTopic] = useState<string>("all");
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>("all");
   const [selectedExamType, setSelectedExamType] = useState<string>("all");
   const [selectedLanguage, setSelectedLanguage] = useState<string>("all");
   const [expandedQuestionId, setExpandedQuestionId] = useState<string | null>(null);
 
+  // Available topics for the active selected subject or all
+  const availableTopics = Array.from(
+    new Set(
+      questions
+        .filter((q) => selectedSubject === "all" || q.subject_id === selectedSubject)
+        .map((q) => q.topic)
+        .filter(Boolean)
+    )
+  );
+
   // Filter questions
   const filteredQuestions = questions.filter((q) => {
     const matchesSubject = selectedSubject === "all" || q.subject_id === selectedSubject;
+    const matchesTopic = selectedTopic === "all" || q.topic === selectedTopic;
     const matchesDifficulty = selectedDifficulty === "all" || q.difficulty === selectedDifficulty;
     const matchesExamType = selectedExamType === "all" || q.exam_type === selectedExamType;
     const matchesLanguage = selectedLanguage === "all" || (q.language || "bn") === selectedLanguage;
@@ -51,11 +63,12 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
       !searchQuery ||
       q.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (q.arabic_text && q.arabic_text.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (q.topic && q.topic.toLowerCase().includes(searchQuery.toLowerCase())) ||
       q.explanation.toLowerCase().includes(searchQuery.toLowerCase()) ||
       q.subject_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (q.source && q.source.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    return matchesSubject && matchesDifficulty && matchesExamType && matchesLanguage && matchesSearch;
+    return matchesSubject && matchesTopic && matchesDifficulty && matchesExamType && matchesLanguage && matchesSearch;
   });
 
   // Export questions to CSV
@@ -246,7 +259,10 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
             <Filter className="w-4 h-4 text-slate-400" />
             <select
               value={selectedSubject}
-              onChange={(e) => setSelectedSubject(e.target.value)}
+              onChange={(e) => {
+                setSelectedSubject(e.target.value);
+                setSelectedTopic("all");
+              }}
               className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none cursor-pointer"
             >
               <option value="all">সকল বিষয় ({questions.length})</option>
@@ -257,6 +273,25 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
               ))}
             </select>
           </div>
+
+          {/* Topic Filter */}
+          {availableTopics.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <Tag className="w-4 h-4 text-emerald-600" />
+              <select
+                value={selectedTopic}
+                onChange={(e) => setSelectedTopic(e.target.value)}
+                className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none cursor-pointer"
+              >
+                <option value="all">সকল টপিক / অধ্যায়</option>
+                {availableTopics.map((t, idx) => (
+                  <option key={idx} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Language Filter */}
           <div className="flex items-center gap-1.5">

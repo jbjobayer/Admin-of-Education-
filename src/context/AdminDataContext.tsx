@@ -118,7 +118,7 @@ interface AdminDataContextType {
   updateSubject: (id: string, sub: Partial<SubjectConfig>) => void;
   toggleSubjectActive: (id: string) => void;
   toggleSubjectPremiumLock: (id: string) => void;
-  addSubject: (sub: Omit<SubjectConfig, "id">) => void;
+  addSubject: (sub: Omit<SubjectConfig, "id">) => SubjectConfig;
 
   // Job Circulars
   addJobCircular: (job: Omit<JobCircular, "id" | "created_at">) => JobCircular;
@@ -625,13 +625,14 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     showToast("বিষয় প্রিমিয়াম লক স্ট্যাটাস পরিবর্তিত হয়েছে!");
   };
 
-  const addSubject = (sub: Omit<SubjectConfig, "id">) => {
+  const addSubject = (sub: Omit<SubjectConfig, "id">): SubjectConfig => {
     const newSub: SubjectConfig = {
       ...sub,
-      id: `sub-${Date.now()}`,
+      id: `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     };
     setSubjects((prev) => [...prev, newSub]);
-    showToast("নতুন বিষয় সফলভাবে যুক্ত হয়েছে!");
+    showToast(`"${newSub.name_bn}" বিষয় সফলভাবে যুক্ত হয়েছে!`);
+    return newSub;
   };
 
   // -------------------------------------------------------------
