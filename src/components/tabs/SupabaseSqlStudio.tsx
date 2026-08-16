@@ -22,7 +22,7 @@ import {
 } from "../../lib/supabase";
 
 export const SupabaseSqlStudio: React.FC = () => {
-  const { questions, exams, courses, subjects, payments, jobCirculars, profiles, showToast } = useAdminData();
+  const { questions, exams, courses, subjects, payments, jobCirculars, profiles, showToast, refreshFromSupabase } = useAdminData();
 
   const [copied, setCopied] = useState(false);
   const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(() => getSavedSupabaseConfig());
@@ -51,7 +51,8 @@ export const SupabaseSqlStudio: React.FC = () => {
         const updated = { ...supabaseConfig, isConnected: true };
         setSupabaseConfig(updated);
         resetSupabaseClient(updated);
-        showToast("Supabase ডাটাবেজ সফলভাবে কানেক্ট হয়েছে!", "success");
+        await refreshFromSupabase();
+        showToast(res.message, "success");
       } else {
         setConnectionStatus("not_configured");
         setConnectionMsg(res.message);
@@ -99,13 +100,17 @@ export const SupabaseSqlStudio: React.FC = () => {
 
   const handleTestConnection = async () => {
     setConnectionStatus("testing");
-    const isOk = await checkSupabaseConnection();
-    if (isOk) {
+    setConnectionMsg("কানেকশন টেস্ট করা হচ্ছে...");
+    const res = await checkSupabaseConnection();
+    if (res.success) {
       setConnectionStatus("connected");
-      showToast("Supabase ডাটাবেজ সফলভাবে সংযুক্ত রয়েছে!", "success");
+      setConnectionMsg(res.message);
+      await refreshFromSupabase();
+      showToast(res.message, "success");
     } else {
       setConnectionStatus("not_configured");
-      showToast("Supabase এনভায়রনমেন্ট ভ্যারিয়েবল সেট করা হয়নি অথবা অফলাইন।", "info");
+      setConnectionMsg(res.message);
+      showToast(res.message, "info");
     }
   };
 

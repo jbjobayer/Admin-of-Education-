@@ -74,23 +74,65 @@ export function resetSupabaseClient(config: SupabaseConfig) {
   }
 }
 
-export async function checkSupabaseConnection(): Promise<{ success: boolean; message: string }> {
+export async function checkSupabaseConnection(): Promise<{ success: boolean; message: string; details?: Record<string, any> }> {
   const supabase = getSupabaseClient();
   if (!supabase) {
-    return { success: false, message: "Supabase URL অথবা Anon Key প্রদান করা হয়নি।" };
+    return {
+      success: false,
+      message: "Supabase Project URL অথবা Anon API Key কনফিগার করা হয়নি।",
+    };
   }
   try {
-    const { error } = await supabase.from("profiles").select("count", { count: "exact", head: true });
-    if (error) {
-      // If table doesn't exist yet, it's still a valid server connection
-      if (error.code === "42P01" || error.message.includes("relation") || error.message.includes("does not exist")) {
-        return { success: true, message: "সার্ভার কানেক্ট হয়েছে! এবার নিচের SQL স্ক্রিপ্ট রান করে টেবিল তৈরি করুন।" };
+    // 1. Test ping / profiles query
+    const { data: profData, error: profError } = await supabase
+      .from("profiles")
+      .select("id, role", { count: "exact", head: false })
+      .limit(5);
+
+    if (profError) {
+      // Table doesn't exist yet - connection is still valid, but needs schema migration
+      if (
+        profError.code === "42P01" ||
+        profError.message.includes("relation") ||
+        profError.message.includes("does not exist")
+      ) {
+        return {
+          success: true,
+          message: "Supabase ক্লাউড সার্ভার সফলভাবে কানেক্ট হয়েছে! এবার নিচের 'কপি SQL স্কিমা' স্ক্রিপ্ট রান করে ডাটাবেজ টেবিল তৈরি করুন।",
+          details: { serverConnected: true, tablesReady: false },
+        };
       }
-      return { success: false, message: `কানেকশন ত্রুটি: ${error.message}` };
+      return {
+        success: false,
+        message: `Supabase কানেকশন ত্রুটি: ${profError.message}`,
+      };
     }
-    return { success: true, message: "Supabase সার্ভার ও টেবিল সফলভাবে কানেক্ট হয়েছে!" };
+
+    // 2. Test other key tables in parallel
+    const [coursesCheck, examsCheck, questionsCheck] = await Promise.all([
+      supabase.from("courses").select("id", { count: "exact", head: true }),
+      supabase.from("exams").select("id", { count: "exact", head: true }),
+      supabase.from("questions").select("id", { count: "exact", head: true }),
+    ]);
+
+    const isFullyMigrated = !coursesCheck.error && !examsCheck.error && !questionsCheck.error;
+
+    return {
+      success: true,
+      message: isFullyMigrated
+        ? "Supabase PostgreSQL ক্লাউড ডাটাবেজ ও সমস্ত টেবিল সফলভাবে সংযুক্ত ও রিয়েল-টাইমে সক্রিয় রয়েছে!"
+        : "Supabase সার্ভার কানেক্ট হয়েছে, কিছু টেবিল মাইগ্রেশন বাকি থাকতে পারে।",
+      details: {
+        serverConnected: true,
+        tablesReady: isFullyMigrated,
+        profilesCount: profData?.length || 0,
+      },
+    };
   } catch (err: any) {
-    return { success: false, message: err?.message || "কানেক্ট করতে ব্যর্থ হয়েছে।" };
+    return {
+      success: false,
+      message: err?.message || "Supabase সার্ভারে কানেক্ট করতে ব্যর্থ হয়েছে। নেটওয়ার্ক ও ইউআরএল চেক করুন।",
+    };
   }
 }
 
