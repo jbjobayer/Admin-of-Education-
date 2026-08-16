@@ -506,32 +506,55 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       status: exam.status || "upcoming",
       is_published: exam.is_published !== undefined ? exam.is_published : true,
     };
+    // Optimistic UI state update
     setExams((prev) => [newExam, ...prev]);
 
     // Asynchronous Supabase Insert
     dbCreateExam(exam)
       .then((res) => {
-        if (res.data) {
+        if (res.error) {
+          console.error("❌ Supabase Exam Creation Error:", res.errorObj || res.error);
+          showToast(`Supabase এরর (${res.errorObj?.code || "Insert Failed"}): ${res.error}`, "error");
+        } else if (res.data) {
           setExams((prev) => prev.map((e) => (e.id === tempId ? res.data! : e)));
+          showToast("নতুন পরীক্ষা সফলভাবে Supabase ডাটাবেজে তৈরি ও সিঙ্ক হয়েছে!", "success");
         }
       })
-      .catch((err) => console.error("Error creating exam:", err));
+      .catch((err) => {
+        console.error("Error creating exam in Supabase:", err);
+        showToast("পরীক্ষা তৈরি করার সময় অপ্রত্যাশিত ত্রুটি ঘটেছে।", "error");
+      });
 
-    showToast("নতুন পরীক্ষা সফলভাবে তৈরি করা হয়েছে!");
     return newExam;
   };
 
   const updateExam = (id: string, exam: Partial<Exam>) => {
     setExams((prev) => prev.map((e) => (e.id === id ? { ...e, ...exam } : e)));
 
-    dbUpdateExam(id, exam).catch((err) => console.error("Error updating exam:", err));
-    showToast("পরীক্ষার তথ্য আপডেট করা হয়েছে!");
+    dbUpdateExam(id, exam)
+      .then((res) => {
+        if (res.error) {
+          console.error("❌ Supabase Exam Update Error:", res.errorObj || res.error);
+          showToast(`Supabase এরর (${res.errorObj?.code || "Update Failed"}): ${res.error}`, "error");
+        } else {
+          showToast("পরীক্ষার তথ্য Supabase ডাটাবেজে আপডেট করা হয়েছে!", "success");
+        }
+      })
+      .catch((err) => console.error("Error updating exam:", err));
   };
 
   const deleteExam = (id: string) => {
     setExams((prev) => prev.filter((e) => e.id !== id));
-    dbDeleteExam(id).catch((err) => console.error("Error deleting exam:", err));
-    showToast("পরীক্ষাটি ডিলিট করা হয়েছে!", "info");
+    dbDeleteExam(id)
+      .then((res) => {
+        if (res.error) {
+          console.error("❌ Supabase Exam Delete Error:", res.errorObj || res.error);
+          showToast(`Supabase এরর (${res.errorObj?.code || "Delete Failed"}): ${res.error}`, "error");
+        } else {
+          showToast("পরীক্ষাটি Supabase ডাটাবেজ থেকে মুছে ফেলা হয়েছে!", "info");
+        }
+      })
+      .catch((err) => console.error("Error deleting exam:", err));
   };
 
   const toggleExamStatus = (id: string) => {

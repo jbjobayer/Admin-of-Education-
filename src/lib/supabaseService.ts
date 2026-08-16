@@ -17,6 +17,12 @@ import {
 export interface ServiceResult<T> {
   data: T | null;
   error: string | null;
+  errorObj?: {
+    message: string;
+    details?: string;
+    hint?: string;
+    code?: string;
+  } | null;
 }
 
 // -------------------------------------------------------------
@@ -505,7 +511,24 @@ export async function dbFetchExams(): Promise<ServiceResult<Exam[]>> {
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: false });
 
-    if (error) return { data: null, error: error.message };
+    if (error) {
+      console.error("❌ Supabase SELECT 'exams' Error:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      });
+      return {
+        data: null,
+        error: error.message,
+        errorObj: {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        },
+      };
+    }
     return { data: (data as Exam[]) || [], error: null };
   } catch (err: any) {
     return { data: null, error: err?.message || "পরীক্ষা তালিকা লোড করতে সমস্যা হয়েছে।" };
@@ -516,30 +539,137 @@ export async function dbCreateExam(
   exam: Omit<Exam, "id" | "created_at" | "updated_at">
 ): Promise<ServiceResult<Exam>> {
   const supabase = getSupabaseClient();
-  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+  if (!supabase) {
+    console.warn("⚠️ Supabase Client is not connected. (Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).");
+    return {
+      data: null,
+      error: "Supabase ক্লায়েন্ট সংযুক্ত নয়। দয়া করে Supabase Studio ট্যাবে URL ও Anon Key দিন।",
+      errorObj: {
+        message: "Supabase client not initialized (missing URL or Anon Key).",
+        code: "CLIENT_NOT_INITIALIZED",
+      },
+    };
+  }
 
   try {
+    // Map category / exam_type safely to Postgres allowed enum values:
+    // 'model_test', 'daily_test', 'chapter_test', 'full_test', 'live_exam'
+    let examType = exam.exam_type || "model_test";
+    if (exam.category === "daily_live" || examType === "daily_live") examType = "live_exam";
+    else if (exam.category === "premium_ntrca" || examType === "premium_ntrca") examType = "full_test";
+    else if (exam.category === "free_test") examType = "model_test";
+    else if (!["model_test", "daily_test", "chapter_test", "full_test", "live_exam"].includes(examType)) {
+      examType = "model_test";
+    }
+
     const payload = {
-      course_id: exam.course_id || null,
-      title: exam.title,
-      description: exam.description || exam.syllabus || "",
-      exam_type: exam.exam_type || "model_test",
-      total_questions: exam.total_questions || (exam.questions ? exam.questions.length : 0),
+      course_id: exam.course_id ? exam.course_id : null,
+      title: (exam.title || "নতুন মডেল টেস্ট").trim(),
+      description: (exam.description || exam.syllabus || exam.subject || "").trim(),
+      exam_type: examType,
+      total_questions: Number(exam.total_questions || (exam.questions ? exam.questions.length : 0)),
       duration_minutes: Number(exam.duration_minutes || 30),
-      total_marks: Number(exam.total_marks || 50),
+      total_marks: Number(exam.total_marks || (exam.questions ? exam.questions.length : 50)),
       negative_mark: Number(exam.negative_mark ?? exam.negative_marking ?? 0.25),
       pass_mark: Number(exam.pass_mark ?? exam.pass_marks ?? 20),
       exam_date: exam.exam_date || exam.start_time || new Date().toISOString(),
-      is_free: Boolean(exam.is_free),
-      is_published: exam.is_published !== undefined ? exam.is_published : true,
-      sort_order: exam.sort_order || 0,
+      is_free: Boolean(exam.is_free || exam.category === "free_test"),
+      is_published: exam.is_published !== undefined ? Boolean(exam.is_published) : true,
+      sort_order: Number(exam.sort_order || 0),
     };
 
+    console.log("🚀 Executing Supabase INSERT into 'exams':", payload);
+
     const { data, error } = await supabase.from("exams").insert(payload).select().single();
-    if (error) return { data: null, error: error.message };
-    return { data: data as Exam, error: null };
+
+    if (error) {
+      console.error("❌ Supabase INSERT 'exams' Error:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        payload,
+      });
+      return {
+        data: null,
+        error: error.message,
+        errorObj: {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        },
+      };
+    }
+
+    console.log("✅ Supabase Exam row created successfully in 'exams' table:", data);
+
+    // If there are questions attached to this exam, insert them into 'questions' table
+    if (exam.questions && Array.isArray(exam.questions) && exam.questions.length > 0 && data?.id) {
+      try {
+        const questionPayloads = exam.questions.map((q, idx) => {
+          const optA = q.option_a || (q.options ? q.options[0] : "") || "ক";
+          const optB = q.option_b || (q.options ? q.options[1] : "") || "খ";
+          const optC = q.option_c || (q.options ? q.options[2] : "") || "গ";
+          const optD = q.option_d || (q.options ? q.options[3] : "") || "ঘ";
+
+          let correctOpt = q.correct_option || "option_a";
+          if (q.correct_index !== undefined) {
+            const mapIdx: Record<number, string> = { 0: "option_a", 1: "option_b", 2: "option_c", 3: "option_d" };
+            correctOpt = mapIdx[q.correct_index] || "option_a";
+          }
+
+          return {
+            exam_id: data.id,
+            question_number: q.question_number || idx + 1,
+            question_text: (q.question_text || q.question || "").trim(),
+            option_a: optA,
+            option_b: optB,
+            option_c: optC,
+            option_d: optD,
+            correct_option: correctOpt,
+            explanation: q.explanation || "",
+            marks: Number(q.marks || 1),
+            negative_marks: Number(q.negative_marks || payload.negative_mark || 0.25),
+            image_url: q.image_url || null,
+            sort_order: idx,
+          };
+        });
+
+        console.log(`🚀 Executing Supabase Bulk INSERT into 'questions' for exam ${data.id}:`, questionPayloads.length);
+        const { error: qError } = await supabase.from("questions").insert(questionPayloads);
+        if (qError) {
+          console.error("❌ Supabase INSERT 'questions' for exam failed:", {
+            message: qError.message,
+            details: qError.details,
+            hint: qError.hint,
+            code: qError.code,
+          });
+        } else {
+          console.log(`✅ Supabase ${questionPayloads.length} questions attached to exam ${data.id} successfully.`);
+        }
+      } catch (qErr) {
+        console.error("Exception inserting exam questions:", qErr);
+      }
+    }
+
+    const createdExam: Exam = {
+      ...exam,
+      ...data,
+      questions: exam.questions || [],
+    };
+
+    return { data: createdExam, error: null };
   } catch (err: any) {
-    return { data: null, error: err?.message || "পরীক্ষা তৈরি করা সম্ভব হয়নি।" };
+    console.error("❌ Unexpected Exception in dbCreateExam:", err);
+    return {
+      data: null,
+      error: err?.message || "পরীক্ষা তৈরি করা সম্ভব হয়নি।",
+      errorObj: {
+        message: err?.message || "Unexpected exception",
+        code: "UNEXPECTED_ERROR",
+      },
+    };
   }
 }
 
@@ -548,15 +678,40 @@ export async function dbUpdateExam(id: string, exam: Partial<Exam>): Promise<Ser
   if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
 
   try {
-    const payload: any = { ...exam };
-    delete payload.id;
-    delete payload.created_at;
-    delete payload.updated_at;
-    delete payload.questions;
+    const payload: any = {};
+    if (exam.course_id !== undefined) payload.course_id = exam.course_id || null;
+    if (exam.title !== undefined) payload.title = exam.title.trim();
+    if (exam.description !== undefined || exam.syllabus !== undefined || exam.subject !== undefined) {
+      payload.description = (exam.description || exam.syllabus || exam.subject || "").trim();
+    }
+    if (exam.exam_type !== undefined || exam.category !== undefined) {
+      let et = exam.exam_type || "model_test";
+      if (exam.category === "daily_live" || et === "daily_live") et = "live_exam";
+      else if (exam.category === "premium_ntrca" || et === "premium_ntrca") et = "full_test";
+      else if (["model_test", "daily_test", "chapter_test", "full_test", "live_exam"].includes(et)) {
+        // valid
+      } else {
+        et = "model_test";
+      }
+      payload.exam_type = et;
+    }
+    if (exam.total_questions !== undefined) payload.total_questions = Number(exam.total_questions);
+    if (exam.duration_minutes !== undefined) payload.duration_minutes = Number(exam.duration_minutes);
+    if (exam.total_marks !== undefined) payload.total_marks = Number(exam.total_marks);
+    if (exam.negative_mark !== undefined || exam.negative_marking !== undefined) {
+      payload.negative_mark = Number(exam.negative_mark ?? exam.negative_marking ?? 0.25);
+    }
+    if (exam.pass_mark !== undefined || exam.pass_marks !== undefined) {
+      payload.pass_mark = Number(exam.pass_mark ?? exam.pass_marks ?? 20);
+    }
+    if (exam.exam_date !== undefined || exam.start_time !== undefined) {
+      payload.exam_date = exam.exam_date || exam.start_time;
+    }
+    if (exam.is_free !== undefined) payload.is_free = Boolean(exam.is_free);
+    if (exam.is_published !== undefined) payload.is_published = Boolean(exam.is_published);
+    if (exam.sort_order !== undefined) payload.sort_order = Number(exam.sort_order);
 
-    if (exam.negative_marking !== undefined) payload.negative_mark = exam.negative_marking;
-    if (exam.pass_marks !== undefined) payload.pass_mark = exam.pass_marks;
-    if (exam.start_time !== undefined) payload.exam_date = exam.start_time;
+    console.log(`🚀 Executing Supabase UPDATE on 'exams' (${id}):`, payload);
 
     const { data, error } = await supabase
       .from("exams")
@@ -565,10 +720,36 @@ export async function dbUpdateExam(id: string, exam: Partial<Exam>): Promise<Ser
       .select()
       .single();
 
-    if (error) return { data: null, error: error.message };
+    if (error) {
+      console.error("❌ Supabase UPDATE 'exams' Error:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        payload,
+      });
+      return {
+        data: null,
+        error: error.message,
+        errorObj: {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        },
+      };
+    }
     return { data: data as Exam, error: null };
   } catch (err: any) {
-    return { data: null, error: err?.message || "পরীক্ষা আপডেট করা যায়নি।" };
+    console.error("❌ Unexpected Error in dbUpdateExam:", err);
+    return {
+      data: null,
+      error: err?.message || "পরীক্ষা আপডেট করা যায়নি।",
+      errorObj: {
+        message: err?.message || "Unexpected exception",
+        code: "UNEXPECTED_ERROR",
+      },
+    };
   }
 }
 
@@ -577,11 +758,37 @@ export async function dbDeleteExam(id: string): Promise<ServiceResult<boolean>> 
   if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
 
   try {
+    console.log(`🚀 Executing Supabase DELETE on 'exams' (${id})`);
     const { error } = await supabase.from("exams").delete().eq("id", id);
-    if (error) return { data: false, error: error.message };
+    if (error) {
+      console.error("❌ Supabase DELETE 'exams' Error:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      });
+      return {
+        data: false,
+        error: error.message,
+        errorObj: {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        },
+      };
+    }
     return { data: true, error: null };
   } catch (err: any) {
-    return { data: false, error: err?.message || "পরীক্ষা মুছে ফেলা যায়নি।" };
+    console.error("❌ Unexpected Error in dbDeleteExam:", err);
+    return {
+      data: false,
+      error: err?.message || "পরীক্ষা মুছে ফেলা যায়নি।",
+      errorObj: {
+        message: err?.message || "Unexpected exception",
+        code: "UNEXPECTED_ERROR",
+      },
+    };
   }
 }
 
