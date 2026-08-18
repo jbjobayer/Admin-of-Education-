@@ -76,12 +76,13 @@ export const GlobalAppCustomizer: React.FC = () => {
     e.preventDefault();
     if (!bannerImageUrl) return;
 
+    const banners = appSettings.home_banners || [];
     addHomeBanner({
       title: bannerTitle || "স্পেশাল অফার",
       image_url: bannerImageUrl,
       target_url: bannerTargetUrl || "#",
       is_active: true,
-      order: appSettings.home_banners.length + 1,
+      order: banners.length + 1,
     });
 
     setIsBannerModalOpen(false);
@@ -281,7 +282,7 @@ export const GlobalAppCustomizer: React.FC = () => {
             </div>
             <div>
               <h3 className="text-sm font-bold text-slate-800 dark:text-white">
-                হোম ব্যানার স্লাইডার ম্যানেজার ({appSettings.home_banners.length} টি ব্যানার)
+                হোম ব্যানার স্লাইডার ম্যানেজার ({(appSettings.home_banners || []).length} টি ব্যানার)
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 অ্যাপের হোম পেজে দৃশ্যমান স্লাইডার ব্যানার ও ক্লিক অ্যাকশন
@@ -299,7 +300,7 @@ export const GlobalAppCustomizer: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
-          {appSettings.home_banners.map((banner) => (
+          {(appSettings.home_banners || []).map((banner) => (
             <div
               key={banner.id}
               className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 overflow-hidden flex flex-col justify-between"

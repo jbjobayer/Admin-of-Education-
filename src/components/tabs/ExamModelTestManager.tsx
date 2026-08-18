@@ -43,41 +43,43 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
 
   const [activeCategory, setActiveCategory] = useState<string>("all");
 
+  const safeExams = exams || [];
+
   const categories: { id: string; labelBn: string; count: number }[] = [
-    { id: "all", labelBn: "সকল পরীক্ষা", count: exams.length },
+    { id: "all", labelBn: "সকল পরীক্ষা", count: safeExams.length },
     {
       id: "daily_live",
       labelBn: "দৈনিক লাইভ পরীক্ষা",
-      count: exams.filter((e) => e.category === "daily_live").length,
+      count: safeExams.filter((e) => e.category === "daily_live").length,
     },
     {
       id: "weekly_model_test",
       labelBn: "সাপ্তাহিক মেগা টেস্ট",
-      count: exams.filter((e) => e.category === "weekly_model_test").length,
+      count: safeExams.filter((e) => e.category === "weekly_model_test").length,
     },
     {
       id: "free_test",
       labelBn: "ফ্রি ট্রায়াল টেস্ট",
-      count: exams.filter((e) => e.category === "free_test").length,
+      count: safeExams.filter((e) => e.category === "free_test").length,
     },
     {
       id: "monthly_mega",
       labelBn: "মাসিক মেগা মডেল টেস্ট",
-      count: exams.filter((e) => e.category === "monthly_mega").length,
+      count: safeExams.filter((e) => e.category === "monthly_mega").length,
     },
     {
       id: "premium_ntrca",
       labelBn: "NTRCA স্পেশাল",
-      count: exams.filter((e) => e.category === "premium_ntrca").length,
+      count: safeExams.filter((e) => e.category === "premium_ntrca").length,
     },
   ];
 
-  const filteredExams = exams.filter((e) => {
+  const filteredExams = safeExams.filter((e) => {
     const matchesCategory = activeCategory === "all" || e.category === activeCategory;
     const matchesSearch =
       !searchQuery ||
-      e.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      e.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (e.title || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (e.subject || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
       (e.syllabus && e.syllabus.toLowerCase().includes(searchQuery.toLowerCase()));
 
     return matchesCategory && matchesSearch;
@@ -242,11 +244,11 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
                 <div className="mt-3 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
                   <div className="flex items-center gap-1.5">
                     <HelpCircle className="w-4 h-4 text-emerald-600" />
-                    <span>সংযুক্ত প্রশ্ন: <strong>{exam.questions.length}</strong> টি</span>
+                    <span>সংযুক্ত প্রশ্ন: <strong>{(exam.questions || []).length}</strong> টি</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Users className="w-4 h-4 text-amber-600" />
-                    <span>অংশগ্রহণকারী: <strong>{exam.participant_count.toLocaleString("bn-BD")}</strong> জন</span>
+                    <span>অংশগ্রহণকারী: <strong>{(exam.participant_count || 0).toLocaleString("bn-BD")}</strong> জন</span>
                   </div>
                 </div>
               </div>

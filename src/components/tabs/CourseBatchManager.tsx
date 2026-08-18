@@ -47,7 +47,8 @@ export const CourseBatchManager: React.FC<CourseBatchManagerProps> = ({ onOpenCo
   const handleToggleButtonActive = (courseId: string, btnId: string) => {
     const course = courses.find((c) => c.id === courseId);
     if (!course) return;
-    const updatedButtons = course.custom_buttons.map((btn) =>
+    const buttons = course.custom_buttons || [];
+    const updatedButtons = buttons.map((btn) =>
       btn.id === btnId ? { ...btn, is_active: !btn.is_active } : btn
     );
     updateCourseButtons(courseId, updatedButtons);
@@ -57,6 +58,7 @@ export const CourseBatchManager: React.FC<CourseBatchManagerProps> = ({ onOpenCo
   const handleAddNewButton = (courseId: string) => {
     const course = courses.find((c) => c.id === courseId);
     if (!course) return;
+    const buttons = course.custom_buttons || [];
 
     const newBtn: CourseButton = {
       id: `btn-${Date.now()}`,
@@ -64,18 +66,19 @@ export const CourseBatchManager: React.FC<CourseBatchManagerProps> = ({ onOpenCo
       action_type: "pdf_url",
       action_value: "https://example.com/file.pdf",
       is_active: true,
-      order: course.custom_buttons.length + 1,
+      order: buttons.length + 1,
       color: "bg-emerald-600 text-white",
     };
 
-    updateCourseButtons(courseId, [...course.custom_buttons, newBtn]);
+    updateCourseButtons(courseId, [...buttons, newBtn]);
   };
 
   // Delete dynamic button
   const handleDeleteButton = (courseId: string, btnId: string) => {
     const course = courses.find((c) => c.id === courseId);
     if (!course) return;
-    const updatedButtons = course.custom_buttons.filter((b) => b.id !== btnId);
+    const buttons = course.custom_buttons || [];
+    const updatedButtons = buttons.filter((b) => b.id !== btnId);
     updateCourseButtons(courseId, updatedButtons);
   };
 
@@ -156,7 +159,7 @@ export const CourseBatchManager: React.FC<CourseBatchManagerProps> = ({ onOpenCo
                         <span className="text-slate-300 dark:text-slate-700">•</span>
                         <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
                           <Users className="w-3.5 h-3.5 text-amber-600" />
-                          ভর্তি হয়েছেন: <strong>{course.enrolled_count.toLocaleString("bn-BD")}</strong> জন
+                          ভর্তি হয়েছেন: <strong>{(course.enrolled_count || 0).toLocaleString("bn-BD")}</strong> জন
                         </span>
                       </div>
                     </div>
@@ -173,7 +176,7 @@ export const CourseBatchManager: React.FC<CourseBatchManagerProps> = ({ onOpenCo
                       }`}
                     >
                       <Sliders className="w-3.5 h-3.5" />
-                      <span>বাটন কন্ট্রোল ({course.custom_buttons.length})</span>
+                      <span>বাটন কন্ট্রোল ({(course.custom_buttons || []).length})</span>
                     </button>
 
                     <button
@@ -210,7 +213,7 @@ export const CourseBatchManager: React.FC<CourseBatchManagerProps> = ({ onOpenCo
                   </div>
 
                   <div className="flex flex-wrap gap-2.5">
-                    {course.custom_buttons.map((btn) => (
+                    {(course.custom_buttons || []).map((btn) => (
                       <div
                         key={btn.id}
                         className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all border ${

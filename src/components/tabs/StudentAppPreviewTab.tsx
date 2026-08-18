@@ -99,15 +99,17 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
     let score = 0;
     let correctCount = 0;
     let wrongCount = 0;
+    const examQuestions = takingExam.questions || [];
+    const negMark = Number(takingExam.negative_marking ?? takingExam.negative_mark ?? 0.25);
 
-    takingExam.questions.forEach((q, idx) => {
+    examQuestions.forEach((q, idx) => {
       const ans = selectedAnswers[idx];
       if (ans !== undefined) {
         if (ans === q.correct_index) {
           score += 1;
           correctCount++;
         } else {
-          score -= takingExam.negative_marking;
+          score -= negMark;
           wrongCount++;
         }
       }
@@ -234,56 +236,64 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
                   <div className="space-y-4">
                     <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-800 text-xs flex items-center justify-between">
                       <span className="flex items-center gap-1">
-                        <Clock className="w-3.5 h-3.5" /> {takingExam.duration_minutes} মিনিট
+                        <Clock className="w-3.5 h-3.5" /> {takingExam.duration_minutes || 30} মিনিট
                       </span>
-                      <span>নম্বর: {takingExam.total_marks} (নেগেটিভ -{takingExam.negative_marking})</span>
+                      <span>নম্বর: {takingExam.total_marks || (takingExam.questions || []).length || 50} (নেগেটিভ -{takingExam.negative_marking ?? takingExam.negative_mark ?? 0.25})</span>
                     </div>
 
-                    {takingExam.questions.map((q, qIdx) => (
-                      <div key={q.id} className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-2">
-                        <div className="flex items-start gap-2">
-                          <span className="text-xs font-bold text-emerald-700">{qIdx + 1}.</span>
-                          <h4 className="text-xs font-bold text-slate-900 leading-snug">{q.question}</h4>
-                        </div>
-
-                        {q.arabic_text && (
-                          <div className="p-2 bg-emerald-50/50 rounded-xl font-arabic text-base text-emerald-950">
-                            {q.arabic_text}
-                          </div>
-                        )}
-
-                        <div className="space-y-1.5 pt-1">
-                          {q.options.map((opt, optIdx) => {
-                            const isSelected = selectedAnswers[qIdx] === optIdx;
-                            return (
-                              <button
-                                key={optIdx}
-                                onClick={() => handleSelectOption(qIdx, optIdx)}
-                                className={`w-full text-left p-2 rounded-xl text-xs flex items-center gap-2 border transition-colors ${
-                                  isSelected
-                                    ? "bg-emerald-600 text-white font-bold border-emerald-600"
-                                    : "bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100"
-                                }`}
-                              >
-                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] ${
-                                  isSelected ? "bg-white text-emerald-700 font-bold" : "bg-slate-200"
-                                }`}>
-                                  {["ক", "খ", "গ", "ঘ"][optIdx]}
-                                </span>
-                                <span className="truncate">{opt}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
+                    {((takingExam.questions || []).length === 0) ? (
+                      <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-2xl border border-slate-200">
+                        এই পরীক্ষায় এখনো কোনো প্রশ্ন যুক্ত করা হয়নি।
                       </div>
-                    ))}
+                    ) : (
+                      (takingExam.questions || []).map((q, qIdx) => (
+                        <div key={q.id || `q-${qIdx}`} className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-2">
+                          <div className="flex items-start gap-2">
+                            <span className="text-xs font-bold text-emerald-700">{qIdx + 1}.</span>
+                            <h4 className="text-xs font-bold text-slate-900 leading-snug">{q.question || q.question_text || "প্রশ্ন"}</h4>
+                          </div>
 
-                    <button
-                      onClick={handleSubmitExam}
-                      className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md"
-                    >
-                      পরীক্ষা সাবমিট করুন
-                    </button>
+                          {q.arabic_text && (
+                            <div className="p-2 bg-emerald-50/50 rounded-xl font-arabic text-base text-emerald-950">
+                              {q.arabic_text}
+                            </div>
+                          )}
+
+                          <div className="space-y-1.5 pt-1">
+                            {(q.options || []).map((opt, optIdx) => {
+                              const isSelected = selectedAnswers[qIdx] === optIdx;
+                              return (
+                                <button
+                                  key={optIdx}
+                                  onClick={() => handleSelectOption(qIdx, optIdx)}
+                                  className={`w-full text-left p-2 rounded-xl text-xs flex items-center gap-2 border transition-colors ${
+                                    isSelected
+                                      ? "bg-emerald-600 text-white font-bold border-emerald-600"
+                                      : "bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100"
+                                  }`}
+                                >
+                                  <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] ${
+                                    isSelected ? "bg-white text-emerald-700 font-bold" : "bg-slate-200"
+                                  }`}>
+                                    {["ক", "খ", "গ", "ঘ"][optIdx] || optIdx + 1}
+                                  </span>
+                                  <span className="truncate">{opt}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))
+                    )}
+
+                    {(takingExam.questions || []).length > 0 && (
+                      <button
+                        onClick={handleSubmitExam}
+                        className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md"
+                      >
+                        পরীক্ষা সাবমিট করুন
+                      </button>
+                    )}
                   </div>
                 ) : (
                   /* Exam Result Card */
@@ -297,7 +307,7 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
                     <div className="p-3 bg-emerald-50 rounded-2xl space-y-1">
                       <span className="text-xs text-slate-500">আপনার প্রাপ্ত নম্বর</span>
                       <div className="text-2xl font-extrabold text-emerald-700">
-                        {examScore} / {takingExam.total_marks}
+                        {examScore} / {takingExam.total_marks || (takingExam.questions || []).length || 50}
                       </div>
                     </div>
 
@@ -309,14 +319,14 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
                       <div>
                         <span className="block text-slate-400">সঠিক উত্তর</span>
                         <strong className="text-emerald-600 text-sm">
-                          {Object.entries(selectedAnswers).filter(([idx, ans]) => takingExam.questions[Number(idx)]?.correct_index === ans).length} টি
+                          {Object.entries(selectedAnswers).filter(([idx, ans]) => (takingExam.questions || [])[Number(idx)]?.correct_index === ans).length} টি
                         </strong>
                       </div>
                     </div>
 
                     <button
                       onClick={() => setTakingExam(null)}
-                      className="w-full py-2 rounded-xl bg-slate-900 text-white text-xs font-bold mt-2"
+                      className="w-full py-2 rounded-xl bg-slate-900 text-white text-xs font-bold mt-2 cursor-pointer"
                     >
                       হোমে ফিরে যান
                     </button>

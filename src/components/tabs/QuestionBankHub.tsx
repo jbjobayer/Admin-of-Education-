@@ -54,7 +54,8 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
   );
 
   // Filter questions
-  const filteredQuestions = questions.filter((q) => {
+  const safeQuestions = questions || [];
+  const filteredQuestions = safeQuestions.filter((q) => {
     const matchesSubject = selectedSubject === "all" || q.subject_id === selectedSubject;
     const matchesTopic = selectedTopic === "all" || q.topic === selectedTopic;
     const matchesDifficulty = selectedDifficulty === "all" || q.difficulty === selectedDifficulty;
@@ -62,11 +63,11 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
     const matchesLanguage = selectedLanguage === "all" || (q.language || "bn") === selectedLanguage;
     const matchesSearch =
       !searchQuery ||
-      q.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (q.question || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
       (q.arabic_text && q.arabic_text.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (q.topic && q.topic.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      q.explanation.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      q.subject_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (q.explanation || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (q.subject_name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
       (q.source && q.source.toLowerCase().includes(searchQuery.toLowerCase()));
 
     return matchesSubject && matchesTopic && matchesDifficulty && matchesExamType && matchesLanguage && matchesSearch;
@@ -79,17 +80,17 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
       q.id,
       `"${(q.subject_name || "").replace(/"/g, '""')}"`,
       `"${(q.topic || "").replace(/"/g, '""')}"`,
-      `"${q.question.replace(/"/g, '""')}"`,
+      `"${(q.question || "").replace(/"/g, '""')}"`,
       `"${(q.arabic_text || "").replace(/"/g, '""')}"`,
-      `"${(q.options[0] || "").replace(/"/g, '""')}"`,
-      `"${(q.options[1] || "").replace(/"/g, '""')}"`,
-      `"${(q.options[2] || "").replace(/"/g, '""')}"`,
-      `"${(q.options[3] || "").replace(/"/g, '""')}"`,
-      q.correct_index,
+      `"${((q.options || [])[0] || "").replace(/"/g, '""')}"`,
+      `"${((q.options || [])[1] || "").replace(/"/g, '""')}"`,
+      `"${((q.options || [])[2] || "").replace(/"/g, '""')}"`,
+      `"${((q.options || [])[3] || "").replace(/"/g, '""')}"`,
+      q.correct_index ?? 0,
       `"${(q.explanation || "").replace(/"/g, '""')}"`,
       `"${(q.source || "").replace(/"/g, '""')}"`,
-      q.difficulty,
-      q.exam_type,
+      q.difficulty || "medium",
+      q.exam_type || "model_test",
       q.language || "bn",
     ]);
 

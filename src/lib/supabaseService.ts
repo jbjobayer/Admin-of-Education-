@@ -131,7 +131,49 @@ export async function dbFetchCourses(): Promise<ServiceResult<Course[]>> {
     if (error) {
       return { data: null, error: error.message };
     }
-    return { data: (data as Course[]) || [], error: null };
+
+    const formatted: Course[] = ((data as any[]) || []).map((row) => ({
+      id: row.id,
+      title: row.title || "কোর্স",
+      slug: row.slug || "",
+      subtitle: row.subtitle || row.description || "",
+      description: row.description || "",
+      instructor_name: row.instructor_name || row.mentor || "",
+      instructor_title: row.instructor_title || row.mentor_title || "",
+      thumbnail_url: row.thumbnail_url || row.cover_image || "https://images.unsplash.com/photo-1577896851231-70ef18881754?w=800",
+      banner_url: row.banner_url || "",
+      price: Number(row.price ?? row.discount_price ?? 0),
+      old_price: Number(row.old_price ?? row.original_price ?? 0),
+      is_free: Boolean(row.is_free),
+      is_published: row.is_published !== undefined ? Boolean(row.is_published) : true,
+      total_students: Number(row.total_students || row.enrolled_count || 0),
+      total_exams: Number(row.total_exams || 0),
+      total_modules: Number(row.total_modules || 0),
+      sort_order: Number(row.sort_order || 0),
+      created_at: row.created_at || new Date().toISOString(),
+      updated_at: row.updated_at,
+      // UI compatibility fields:
+      mentor: row.mentor || row.instructor_name || "মুফতি জুবায়ের আহমেদ",
+      mentor_title: row.mentor_title || row.instructor_title || "সিনিয়র প্রভাষক, আরবি বিভাগ",
+      cover_image: row.cover_image || row.thumbnail_url || "https://images.unsplash.com/photo-1577896851231-70ef18881754?w=800",
+      original_price: Number(row.original_price ?? row.old_price ?? 1200),
+      discount_price: Number(row.discount_price ?? row.price ?? 650),
+      course_tag: row.course_tag || "NTRCA Special",
+      features: Array.isArray(row.features) ? row.features : ["লাইভ ও রেকর্ডেড ক্লাস", "অধ্যায়ভিত্তিক PDF নোট", "সাপ্তাহিক মডেল টেস্ট", "প্রাইভেট ডিসকাশন গ্রুপ"],
+      custom_buttons: Array.isArray(row.custom_buttons) ? row.custom_buttons : [
+        { id: "b1", label: "রুটিন ডাউনলোড", action_type: "pdf_url", action_value: "https://example.com/routine.pdf", is_active: true, order: 1, color: "bg-emerald-600 text-white" },
+        { id: "b2", label: "সিলেবাস দেখুন", action_type: "pdf_url", action_value: "https://example.com/syllabus.pdf", is_active: true, order: 2, color: "bg-blue-600 text-white" },
+      ],
+      chapters: Array.isArray(row.chapters) ? row.chapters : [],
+      routine: Array.isArray(row.routine) ? row.routine : [],
+      syllabus: Array.isArray(row.syllabus) ? row.syllabus : [],
+      materials: Array.isArray(row.materials) ? row.materials : [],
+      enrolled_count: Number(row.enrolled_count || row.total_students || 0),
+      is_active: row.is_active !== undefined ? Boolean(row.is_active) : (row.is_published !== undefined ? Boolean(row.is_published) : true),
+      is_featured: Boolean(row.is_featured),
+    }));
+
+    return { data: formatted, error: null };
   } catch (err: any) {
     return { data: null, error: err?.message || "কোর্স লোড করতে সমস্যা হয়েছে।" };
   }
@@ -557,7 +599,40 @@ export async function dbFetchExams(): Promise<ServiceResult<Exam[]>> {
         },
       };
     }
-    return { data: (data as Exam[]) || [], error: null };
+    const formatted: Exam[] = ((data as any[]) || []).map((row) => ({
+      id: row.id,
+      course_id: row.course_id || undefined,
+      title: row.title || "মডেল টেস্ট",
+      description: row.description || "",
+      exam_type: row.exam_type || "model_test",
+      total_questions: Number(row.total_questions || (Array.isArray(row.questions) ? row.questions.length : 0)),
+      duration_minutes: Number(row.duration_minutes || 30),
+      total_marks: Number(row.total_marks || 50),
+      negative_mark: Number(row.negative_mark ?? row.negative_marking ?? 0.25),
+      pass_mark: Number(row.pass_mark ?? row.pass_marks ?? 20),
+      exam_date: row.exam_date || row.start_time || new Date().toISOString(),
+      is_free: Boolean(row.is_free),
+      is_published: row.is_published !== undefined ? Boolean(row.is_published) : true,
+      sort_order: Number(row.sort_order || 0),
+      created_at: row.created_at || new Date().toISOString(),
+      updated_at: row.updated_at,
+      // UI compatibility fields:
+      category: row.category || (row.exam_type === "live_exam" ? "daily_live" : row.exam_type === "full_test" ? "premium_ntrca" : "weekly_model_test"),
+      subject: row.subject || "সাধারণ ও মাদ্রাসা কারিকুলাম",
+      syllabus: row.syllabus || row.description || "সম্পূর্ণ সিলেবাস ভিত্তিক মডেল টেস্ট",
+      pass_marks: Number(row.pass_marks ?? row.pass_mark ?? 20),
+      negative_marking: Number(row.negative_marking ?? row.negative_mark ?? 0.25),
+      start_time: row.start_time || row.exam_date || new Date().toISOString(),
+      end_time: row.end_time || new Date(Date.now() + 86400000).toISOString(),
+      result_published: Boolean(row.result_published),
+      status: row.status || (row.is_published ? "live" : "upcoming"),
+      questions: Array.isArray(row.questions) ? row.questions : [],
+      participant_count: Number(row.participant_count || 0),
+      banner_image: row.banner_image || "",
+      is_featured: Boolean(row.is_featured),
+    }));
+
+    return { data: formatted, error: null };
   } catch (err: any) {
     return { data: null, error: err?.message || "পরীক্ষা তালিকা লোড করতে সমস্যা হয়েছে।" };
   }
