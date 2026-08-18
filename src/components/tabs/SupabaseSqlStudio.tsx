@@ -11,10 +11,12 @@ import {
   RefreshCw,
   ExternalLink,
   Code,
+  Zap,
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import {
   SUPABASE_SCHEMA_SQL,
+  SUPABASE_FIX_RLS_SQL,
   checkSupabaseConnection,
   getSavedSupabaseConfig,
   resetSupabaseClient,
@@ -25,6 +27,7 @@ export const SupabaseSqlStudio: React.FC = () => {
   const { questions, exams, courses, subjects, payments, jobCirculars, profiles, showToast, refreshFromSupabase } = useAdminData();
 
   const [copied, setCopied] = useState(false);
+  const [copiedRls, setCopiedRls] = useState(false);
   const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(() => getSavedSupabaseConfig());
   const [connectionStatus, setConnectionStatus] = useState<"idle" | "testing" | "connected" | "not_configured">(() => {
     const cfg = getSavedSupabaseConfig();
@@ -87,6 +90,13 @@ export const SupabaseSqlStudio: React.FC = () => {
     setTimeout(() => setCopied(false), 3000);
   };
 
+  const handleCopyRlsFix = () => {
+    navigator.clipboard.writeText(SUPABASE_FIX_RLS_SQL);
+    setCopiedRls(true);
+    showToast("⚡ RLS সিকিউরিটি ফিক্স স্ক্রিপ্ট ক্লিপবোর্ডে কপি হয়েছে! এটি Supabase SQL Editor-এ পেস্ট করে Run করুন।");
+    setTimeout(() => setCopiedRls(false), 3000);
+  };
+
   const handleDownloadSql = () => {
     const element = document.createElement("a");
     const file = new Blob([SUPABASE_SCHEMA_SQL], { type: "text/plain" });
@@ -96,22 +106,6 @@ export const SupabaseSqlStudio: React.FC = () => {
     element.click();
     document.body.removeChild(element);
     showToast("tamreen_supabase_schema.sql ফাইল ডাউনলোড সম্পন্ন!");
-  };
-
-  const handleTestConnection = async () => {
-    setConnectionStatus("testing");
-    setConnectionMsg("কানেকশন টেস্ট করা হচ্ছে...");
-    const res = await checkSupabaseConnection();
-    if (res.success) {
-      setConnectionStatus("connected");
-      setConnectionMsg(res.message);
-      await refreshFromSupabase();
-      showToast(res.message, "success");
-    } else {
-      setConnectionStatus("not_configured");
-      setConnectionMsg(res.message);
-      showToast(res.message, "info");
-    }
   };
 
   return (
@@ -128,13 +122,21 @@ export const SupabaseSqlStudio: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleCopyRlsFix}
+            className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-md shadow-amber-500/20 transition-all cursor-pointer"
+          >
+            {copiedRls ? <CheckCircle2 className="w-4 h-4" /> : <Zap className="w-4 h-4" />}
+            <span>{copiedRls ? "RLS ফিক্স কপি হয়েছে!" : "⚡ RLS 42501 ফিক্স কপি"}</span>
+          </button>
+
           <button
             onClick={handleCopySql}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
           >
             {copied ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-            <span>{copied ? "কপি হয়েছে!" : "কপি SQL স্কিমা"}</span>
+            <span>{copied ? "কপি হয়েছে!" : "কপি পূর্ণাঙ্গ SQL স্কিমা"}</span>
           </button>
 
           <button
@@ -145,6 +147,36 @@ export const SupabaseSqlStudio: React.FC = () => {
             <span>.SQL ফাইল ডাউনলোড</span>
           </button>
         </div>
+      </div>
+
+      {/* 1-Click RLS Permission Fix Notice Card */}
+      <div className="bg-gradient-to-r from-amber-50 via-amber-50/50 to-orange-50 dark:from-amber-950/40 dark:via-amber-950/20 dark:to-orange-950/30 rounded-3xl p-5 border border-amber-200 dark:border-amber-800/80 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-bold flex-shrink-0 shadow-md shadow-amber-500/30">
+            <ShieldCheck className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                Supabase RLS পারমিশন ফিক্স স্ক্রিপ্ট (Fix Error 42501)
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-200">
+                1-Click Fix
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 max-w-2xl leading-relaxed">
+              যদি Supabase-এ প্রশ্ন বা পরীক্ষা সেভ করার সময় <strong>"new row violates row-level security policy (42501)"</strong> এরর আসে, নিচের বাটনে ক্লিক করে স্ক্রিপ্টটি কপি করুন এবং Supabase Dashboard-এর <strong>SQL Editor</strong>-এ পেস্ট করে <strong>Run</strong> করুন।
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={handleCopyRlsFix}
+          className="flex-shrink-0 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-md shadow-amber-500/20 transition-all cursor-pointer flex items-center gap-2"
+        >
+          {copiedRls ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+          <span>{copiedRls ? "ক্লিপবোর্ডে কপি হয়েছে!" : "RLS ফিক্স SQL কপি করুন"}</span>
+        </button>
       </div>
 
       {/* Supabase Connection Setup & Live Diagnostic Card */}

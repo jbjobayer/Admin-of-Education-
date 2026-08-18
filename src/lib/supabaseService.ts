@@ -924,36 +924,7 @@ export async function dbCreateQuestion(
       correctOpt = mapIdx[q.correct_index] || "option_a";
     }
 
-    let targetExamId = isValidUuid(q.exam_id) ? q.exam_id : undefined;
-    // If no valid exam_id provided, find or create default central exam if needed
-    if (!targetExamId) {
-      try {
-        const { data: firstExam } = await supabase.from("exams").select("id").limit(1).maybeSingle();
-        if (firstExam?.id && isValidUuid(firstExam.id)) {
-          targetExamId = firstExam.id;
-        } else {
-          // Create default central exam
-          const { data: newExam } = await supabase
-            .from("exams")
-            .insert({
-              title: "সেন্ট্রাল প্রশ্ন ব্যাংক সংগ্রহ",
-              description: "তামরীন সাধারণ প্রশ্ন ব্যাংক",
-              exam_type: "model_test",
-              total_questions: 1,
-              duration_minutes: 30,
-              total_marks: 50,
-              is_published: true,
-            })
-            .select("id")
-            .maybeSingle();
-          if (newExam?.id && isValidUuid(newExam.id)) {
-            targetExamId = newExam.id;
-          }
-        }
-      } catch (e) {
-        console.warn("Could not find or create default exam, attempting nullable exam_id insert", e);
-      }
-    }
+    const targetExamId = isValidUuid(q.exam_id) ? q.exam_id : null;
 
     // Try rich payload first
     const richPayload: any = {
@@ -978,7 +949,7 @@ export async function dbCreateQuestion(
       image_url: q.image_url || null,
       sort_order: q.sort_order || 0,
     };
-    if (targetExamId && isValidUuid(targetExamId)) {
+    if (targetExamId) {
       richPayload.exam_id = targetExamId;
     }
 
@@ -1000,13 +971,15 @@ export async function dbCreateQuestion(
         image_url: q.image_url || null,
         sort_order: q.sort_order || 0,
       };
-      if (targetExamId && isValidUuid(targetExamId)) {
+      if (targetExamId) {
         basePayload.exam_id = targetExamId;
       }
       insertRes = await supabase.from("questions").insert(basePayload).select().single();
     }
 
-    if (insertRes.error) return { data: null, error: insertRes.error.message };
+    if (insertRes.error) {
+      return { data: null, error: insertRes.error.message, errorObj: insertRes.error };
+    }
 
     const data = insertRes.data;
     const formatted: Question = {
@@ -1060,31 +1033,6 @@ export async function dbCreateBulkQuestions(
   try {
     if (qs.length === 0) return { data: [], error: null };
 
-    // Get a default exam ID if any question lacks one
-    let defaultExamId: string | undefined = undefined;
-    try {
-      const { data: firstExam } = await supabase.from("exams").select("id").limit(1).maybeSingle();
-      if (firstExam?.id && isValidUuid(firstExam.id)) {
-        defaultExamId = firstExam.id;
-      } else {
-        const { data: newExam } = await supabase
-          .from("exams")
-          .insert({
-            title: "সেন্ট্রাল প্রশ্ন ব্যাংক সংগ্রহ",
-            description: "তামরীন সাধারণ প্রশ্ন ব্যাংক",
-            exam_type: "model_test",
-            is_published: true,
-          })
-          .select("id")
-          .maybeSingle();
-        if (newExam?.id && isValidUuid(newExam.id)) {
-          defaultExamId = newExam.id;
-        }
-      }
-    } catch (e) {
-      console.warn("Could not get default exam for bulk questions", e);
-    }
-
     const buildPayloads = (rich: boolean) =>
       qs.map((q, idx) => {
         const optA = q.option_a || (q.options ? q.options[0] : "") || "ক";
@@ -1098,7 +1046,7 @@ export async function dbCreateBulkQuestions(
           correctOpt = mapIdx[q.correct_index] || "option_a";
         }
 
-        const resolvedExamId = isValidUuid(q.exam_id) ? q.exam_id : defaultExamId;
+        const resolvedExamId = isValidUuid(q.exam_id) ? q.exam_id : null;
 
         const baseObj: any = {
           question_number: q.question_number || idx + 1,
@@ -1113,7 +1061,7 @@ export async function dbCreateBulkQuestions(
           negative_marks: Number(q.negative_marks || 0.25),
           sort_order: idx,
         };
-        if (resolvedExamId && isValidUuid(resolvedExamId)) {
+        if (resolvedExamId) {
           baseObj.exam_id = resolvedExamId;
         }
 
@@ -1140,7 +1088,9 @@ export async function dbCreateBulkQuestions(
       insertRes = await supabase.from("questions").insert(buildPayloads(false)).select();
     }
 
-    if (insertRes.error) return { data: null, error: insertRes.error.message };
+    if (insertRes.error) {
+      return { data: null, error: insertRes.error.message, errorObj: insertRes.error };
+    }
 
     const formatted: Question[] = ((insertRes.data as any[]) || []).map((row, idx) => {
       const original = qs[idx] || {};

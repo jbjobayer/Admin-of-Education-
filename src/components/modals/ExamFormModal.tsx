@@ -652,6 +652,13 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       addExam(examData);
     }
 
+    // Ensure all questions attached to this exam are also added to the central Question Bank if not already present
+    const existingIds = new Set(questions.map((q) => q.id));
+    const newQuestionsForBank = examQuestions.filter((q) => !existingIds.has(q.id));
+    if (newQuestionsForBank.length > 0) {
+      addBulkQuestions(newQuestionsForBank);
+    }
+
     onClose();
   };
 
