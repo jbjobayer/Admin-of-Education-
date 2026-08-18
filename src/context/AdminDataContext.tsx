@@ -120,6 +120,9 @@ interface AdminDataContextType {
   updateCourse: (id: string, c: Partial<Course>) => void;
   deleteCourse: (id: string) => void;
   updateCourseButtons: (courseId: string, buttons: CourseButton[]) => void;
+  getCourseExams: (courseId: string) => Exam[];
+  getCourseQuestions: (courseId: string) => Question[];
+  linkExamToCourse: (examId: string, courseId: string) => Promise<void>;
 
   // Subject Hub
   updateSubject: (id: string, sub: Partial<SubjectConfig>) => void;
@@ -782,6 +785,42 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     dbUpdateCourse(courseId, { custom_buttons: buttons }).catch((err) => console.error(err));
     showToast("কোর্স অ্যাকশন বাটন কনফিগারেশন সংরক্ষিত হয়েছে!");
   };
+
+  const getCourseExams = useCallback(
+    (courseId: string): Exam[] => {
+      const course = courses.find((c) => c.id === courseId);
+      return exams.filter((ex) => {
+        if (ex.course_id && ex.course_id === courseId) return true;
+        if (course?.title && ex.title && ex.title.toLowerCase().includes(course.title.toLowerCase())) return true;
+        if (course?.course_tag && ex.subject && ex.subject.toLowerCase().includes(course.course_tag.toLowerCase())) return true;
+        return false;
+      });
+    },
+    [courses, exams]
+  );
+
+  const getCourseQuestions = useCallback(
+    (courseId: string): Question[] => {
+      const courseExamsList = getCourseExams(courseId);
+      const examIds = new Set(courseExamsList.map((e) => e.id));
+      return questions.filter((q) => {
+        if (q.exam_id && examIds.has(q.exam_id)) return true;
+        if ((q as any).course_id && (q as any).course_id === courseId) return true;
+        return false;
+      });
+    },
+    [getCourseExams, questions]
+  );
+
+  const linkExamToCourse = useCallback(
+    async (examId: string, courseId: string) => {
+      setExams((prev) => prev.map((e) => (e.id === examId ? { ...e, course_id: courseId } : e)));
+      const res = await dbUpdateExam(examId, { course_id: courseId });
+      handleSupabaseNotice(res, "পরীক্ষা কোর্সে লিঙ্ক করা হয়েছে");
+      showToast("কোর্সের সাথে পরীক্ষা সফলভাবে সংযুক্ত হয়েছে!", "success");
+    },
+    [handleSupabaseNotice, showToast]
+  );
 
   // -------------------------------------------------------------
   // Subject Hub Actions

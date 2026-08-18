@@ -37,6 +37,7 @@ const AdminDashboardContent: React.FC = () => {
 
   const [isExamFormOpen, setIsExamFormOpen] = useState(false);
   const [examToEdit, setExamToEdit] = useState<Exam | null>(null);
+  const [examInitialCourseId, setExamInitialCourseId] = useState<string | undefined>(undefined);
 
   const [isCourseFormOpen, setIsCourseFormOpen] = useState(false);
   const [courseToEdit, setCourseToEdit] = useState<Course | null>(null);
@@ -90,6 +91,11 @@ const AdminDashboardContent: React.FC = () => {
             onOpenCourseForm={(c) => {
               setCourseToEdit(c || null);
               setIsCourseFormOpen(true);
+            }}
+            onOpenExamFormForCourse={(courseId) => {
+              setExamToEdit(null);
+              setExamInitialCourseId(courseId);
+              setIsExamFormOpen(true);
             }}
           />
         );
@@ -179,8 +185,10 @@ const AdminDashboardContent: React.FC = () => {
         onClose={() => {
           setIsExamFormOpen(false);
           setExamToEdit(null);
+          setExamInitialCourseId(undefined);
         }}
         examToEdit={examToEdit}
+        initialCourseId={examInitialCourseId}
       />
       <CourseFormModal
         isOpen={isCourseFormOpen}

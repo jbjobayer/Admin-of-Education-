@@ -35,6 +35,7 @@ interface ExamFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   examToEdit?: Exam | null;
+  initialCourseId?: string;
 }
 
 type QuestionAddMode = "bank" | "manual" | "paste" | "ai";
@@ -43,10 +44,12 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
   isOpen,
   onClose,
   examToEdit,
+  initialCourseId,
 }) => {
   const {
     questions,
     subjects,
+    courses,
     addExam,
     updateExam,
     addQuestion,
@@ -56,6 +59,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
 
   // Basic Exam Info
   const [title, setTitle] = useState("");
+  const [selectedCourseId, setSelectedCourseId] = useState<string>("");
   const [category, setCategory] = useState<ExamCategory>("daily_live");
   const [subject, setSubject] = useState("নাহু ও সরফ");
   const [syllabus, setSyllabus] = useState("");
@@ -133,6 +137,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
   useEffect(() => {
     if (examToEdit) {
       setTitle(examToEdit.title);
+      setSelectedCourseId(examToEdit.course_id || initialCourseId || "");
       setCategory(examToEdit.category || "daily_live");
       setSubject(examToEdit.subject || "নাহু ও সরফ");
       setSyllabus(examToEdit.syllabus || "");
@@ -164,6 +169,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       setAiSubject(examToEdit.subject || "নাহু ও সরফ");
     } else {
       setTitle("");
+      setSelectedCourseId(initialCourseId || "");
       setCategory("daily_live");
       setSubject("নাহু ও সরফ");
       setSyllabus("");
@@ -178,7 +184,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       setPasteSubject("নাহু ও সরফ");
       setAiSubject("নাহু ও সরফ");
     }
-  }, [examToEdit, isOpen]);
+  }, [examToEdit, initialCourseId, isOpen]);
 
   // Sync subject field changes to sub-tabs
   const handleExamSubjectChange = (newSub: string) => {
@@ -631,7 +637,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
     const calculatedPassMarks = Math.round(calculatedTotalMarks * 0.4) || 20;
 
     const examData = {
-      course_id: null,
+      course_id: selectedCourseId || null,
       title: title.trim(),
       description: syllabus.trim() || subject.trim() || title.trim(),
       category,
@@ -741,6 +747,27 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold"
                   required
                 />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1 flex items-center justify-between">
+                  <span>সংযুক্ত কোর্স / ব্যাচ (Course)</span>
+                  {selectedCourseId && (
+                    <span className="text-[10px] text-emerald-600 font-bold">কোর্সের সাথে লিঙ্ক করা</span>
+                  )}
+                </label>
+                <select
+                  value={selectedCourseId}
+                  onChange={(e) => setSelectedCourseId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-slate-800 text-slate-900 dark:text-white font-bold cursor-pointer"
+                >
+                  <option value="">(কোনো কোর্সে নয় — সাধারণ পরীক্ষা)</option>
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      📚 {c.title} {c.course_tag ? `(${c.course_tag})` : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>

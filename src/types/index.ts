@@ -218,6 +218,7 @@ export interface Course {
   is_published: boolean;
   total_students?: number;
   total_exams?: number;
+  total_questions?: number;
   total_modules?: number;
   sort_order?: number;
   created_at: string;
@@ -232,6 +233,8 @@ export interface Course {
   features?: string[];
   custom_buttons?: CourseButton[];
   chapters?: CourseChapter[];
+  questions?: Question[];
+  exams?: Exam[];
   routine_url?: string;
   syllabus_url?: string;
   enrolled_count?: number;

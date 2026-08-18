@@ -132,46 +132,87 @@ export async function dbFetchCourses(): Promise<ServiceResult<Course[]>> {
       return { data: null, error: error.message };
     }
 
-    const formatted: Course[] = ((data as any[]) || []).map((row) => ({
-      id: row.id,
-      title: row.title || "কোর্স",
-      slug: row.slug || "",
-      subtitle: row.subtitle || row.description || "",
-      description: row.description || "",
-      instructor_name: row.instructor_name || row.mentor || "",
-      instructor_title: row.instructor_title || row.mentor_title || "",
-      thumbnail_url: row.thumbnail_url || row.cover_image || "https://images.unsplash.com/photo-1577896851231-70ef18881754?w=800",
-      banner_url: row.banner_url || "",
-      price: Number(row.price ?? row.discount_price ?? 0),
-      old_price: Number(row.old_price ?? row.original_price ?? 0),
-      is_free: Boolean(row.is_free),
-      is_published: row.is_published !== undefined ? Boolean(row.is_published) : true,
-      total_students: Number(row.total_students || row.enrolled_count || 0),
-      total_exams: Number(row.total_exams || 0),
-      total_modules: Number(row.total_modules || 0),
-      sort_order: Number(row.sort_order || 0),
-      created_at: row.created_at || new Date().toISOString(),
-      updated_at: row.updated_at,
-      // UI compatibility fields:
-      mentor: row.mentor || row.instructor_name || "মুফতি জুবায়ের আহমেদ",
-      mentor_title: row.mentor_title || row.instructor_title || "সিনিয়র প্রভাষক, আরবি বিভাগ",
-      cover_image: row.cover_image || row.thumbnail_url || "https://images.unsplash.com/photo-1577896851231-70ef18881754?w=800",
-      original_price: Number(row.original_price ?? row.old_price ?? 1200),
-      discount_price: Number(row.discount_price ?? row.price ?? 650),
-      course_tag: row.course_tag || "NTRCA Special",
-      features: Array.isArray(row.features) ? row.features : ["লাইভ ও রেকর্ডেড ক্লাস", "অধ্যায়ভিত্তিক PDF নোট", "সাপ্তাহিক মডেল টেস্ট", "প্রাইভেট ডিসকাশন গ্রুপ"],
-      custom_buttons: Array.isArray(row.custom_buttons) ? row.custom_buttons : [
-        { id: "b1", label: "রুটিন ডাউনলোড", action_type: "pdf_url", action_value: "https://example.com/routine.pdf", is_active: true, order: 1, color: "bg-emerald-600 text-white" },
-        { id: "b2", label: "সিলেবাস দেখুন", action_type: "pdf_url", action_value: "https://example.com/syllabus.pdf", is_active: true, order: 2, color: "bg-blue-600 text-white" },
-      ],
-      chapters: Array.isArray(row.chapters) ? row.chapters : [],
-      routine: Array.isArray(row.routine) ? row.routine : [],
-      syllabus: Array.isArray(row.syllabus) ? row.syllabus : [],
-      materials: Array.isArray(row.materials) ? row.materials : [],
-      enrolled_count: Number(row.enrolled_count || row.total_students || 0),
-      is_active: row.is_active !== undefined ? Boolean(row.is_active) : (row.is_published !== undefined ? Boolean(row.is_published) : true),
-      is_featured: Boolean(row.is_featured),
-    }));
+    // Also fetch exams and questions to resolve linked stats for course cards
+    let allExams: any[] = [];
+    let allQuestions: any[] = [];
+    try {
+      const [examsRes, questionsRes] = await Promise.all([
+        supabase.from("exams").select("id, course_id, title, description, exam_type, total_questions, duration_minutes, total_marks, subject, syllabus, is_published, status"),
+        supabase.from("questions").select("id, exam_id, question_text, question, topic, subject_name, subject_id, options, option_a, option_b, option_c, option_d, correct_option, explanation"),
+      ]);
+      if (examsRes.data) allExams = examsRes.data;
+      if (questionsRes.data) allQuestions = questionsRes.data;
+    } catch (fetchErr) {
+      console.warn("Notice fetching exams/questions for courses:", fetchErr);
+    }
+
+    const formatted: Course[] = ((data as any[]) || []).map((row) => {
+      // Find linked exams for this course
+      const linkedExams = allExams.filter((e) => {
+        if (e.course_id && e.course_id === row.id) return true;
+        if (row.title && e.title && e.title.toLowerCase().includes(row.title.toLowerCase())) return true;
+        if (row.course_tag && e.subject && e.subject.toLowerCase().includes(row.course_tag.toLowerCase())) return true;
+        return false;
+      });
+
+      const linkedExamIds = new Set(linkedExams.map((e) => e.id));
+      const linkedQuestions = allQuestions.filter((q) => {
+        if (q.exam_id && linkedExamIds.has(q.exam_id)) return true;
+        if (q.course_id && q.course_id === row.id) return true;
+        return false;
+      });
+
+      const computedTotalExams = linkedExams.length || Number(row.total_exams || 0);
+      const computedTotalQuestions =
+        linkedQuestions.length ||
+        linkedExams.reduce((sum, ex) => sum + Number(ex.total_questions || 0), 0) ||
+        0;
+
+      return {
+        id: row.id,
+        title: row.title || "কোর্স",
+        slug: row.slug || "",
+        subtitle: row.subtitle || row.description || "",
+        description: row.description || "",
+        instructor_name: row.instructor_name || row.mentor || "",
+        instructor_title: row.instructor_title || row.mentor_title || "",
+        thumbnail_url: row.thumbnail_url || row.cover_image || "https://images.unsplash.com/photo-1577896851231-70ef18881754?w=800",
+        banner_url: row.banner_url || "",
+        price: Number(row.price ?? row.discount_price ?? 0),
+        old_price: Number(row.old_price ?? row.original_price ?? 0),
+        is_free: Boolean(row.is_free),
+        is_published: row.is_published !== undefined ? Boolean(row.is_published) : true,
+        total_students: Number(row.total_students || row.enrolled_count || 0),
+        total_exams: computedTotalExams,
+        total_questions: computedTotalQuestions,
+        total_modules: Number(row.total_modules || 0),
+        sort_order: Number(row.sort_order || 0),
+        created_at: row.created_at || new Date().toISOString(),
+        updated_at: row.updated_at,
+        // Linked exam & question entities
+        exams: linkedExams as Exam[],
+        questions: linkedQuestions as Question[],
+        // UI compatibility fields:
+        mentor: row.mentor || row.instructor_name || "মুফতি জুবায়ের আহমেদ",
+        mentor_title: row.mentor_title || row.instructor_title || "সিনিয়র প্রভাষক, আরবি বিভাগ",
+        cover_image: row.cover_image || row.thumbnail_url || "https://images.unsplash.com/photo-1577896851231-70ef18881754?w=800",
+        original_price: Number(row.original_price ?? row.old_price ?? 1200),
+        discount_price: Number(row.discount_price ?? row.price ?? 650),
+        course_tag: row.course_tag || "NTRCA Special",
+        features: Array.isArray(row.features) ? row.features : ["লাইভ ও রেকর্ডেড ক্লাস", "অধ্যায়ভিত্তিক PDF নোট", "সাপ্তাহিক মডেল টেস্ট", "প্রাইভেট ডিসকাশন গ্রুপ"],
+        custom_buttons: Array.isArray(row.custom_buttons) ? row.custom_buttons : [
+          { id: "b1", label: "রুটিন ডাউনলোড", action_type: "pdf_url", action_value: "https://example.com/routine.pdf", is_active: true, order: 1, color: "bg-emerald-600 text-white" },
+          { id: "b2", label: "সিলেবাস দেখুন", action_type: "pdf_url", action_value: "https://example.com/syllabus.pdf", is_active: true, order: 2, color: "bg-blue-600 text-white" },
+        ],
+        chapters: Array.isArray(row.chapters) ? row.chapters : [],
+        routine: Array.isArray(row.routine) ? row.routine : [],
+        syllabus: Array.isArray(row.syllabus) ? row.syllabus : [],
+        materials: Array.isArray(row.materials) ? row.materials : [],
+        enrolled_count: Number(row.enrolled_count || row.total_students || 0),
+        is_active: row.is_active !== undefined ? Boolean(row.is_active) : (row.is_published !== undefined ? Boolean(row.is_published) : true),
+        is_featured: Boolean(row.is_featured),
+      };
+    });
 
     return { data: formatted, error: null };
   } catch (err: any) {

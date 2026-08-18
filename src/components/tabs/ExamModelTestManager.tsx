@@ -33,6 +33,8 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
 }) => {
   const {
     exams,
+    questions,
+    courses,
     deleteExam,
     toggleExamStatus,
     publishExamResult,
@@ -144,6 +146,15 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
           const isLive = exam.status === "live";
           const isBroadcasting = appSettings.live_exam_broadcast_active && appSettings.active_broadcast_exam_id === exam.id;
 
+          // Calculate attached questions
+          const attachedQuestions = (exam.questions && exam.questions.length > 0)
+            ? exam.questions
+            : questions.filter((q) => q.exam_id === exam.id);
+          const qCount = attachedQuestions.length || exam.total_questions || 0;
+
+          // Find linked course
+          const linkedCourse = courses.find((c) => c.id === exam.course_id);
+
           return (
             <div
               key={exam.id}
@@ -152,7 +163,7 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
               <div>
                 {/* Status Badges & Quick Action */}
                 <div className="flex items-center justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span
                       className={`text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${
                         isLive
@@ -169,6 +180,12 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/40">
                       {exam.subject}
                     </span>
+
+                    {linkedCourse && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200">
+                        📚 {linkedCourse.title}
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1.5">
@@ -244,11 +261,11 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
                 {/* Attached Questions Summary */}
                 <div className="mt-3 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
                   <div className="flex items-center gap-1.5">
-                    <HelpCircle className={`w-4 h-4 ${(exam.questions || []).length > 0 ? "text-emerald-600" : "text-rose-500"}`} />
+                    <HelpCircle className={`w-4 h-4 ${qCount > 0 ? "text-emerald-600" : "text-rose-500"}`} />
                     <span>
                       সংযুক্ত প্রশ্ন:{" "}
-                      {(exam.questions || []).length > 0 ? (
-                        <strong className="text-emerald-700 dark:text-emerald-400">{(exam.questions || []).length} টি</strong>
+                      {qCount > 0 ? (
+                        <strong className="text-emerald-700 dark:text-emerald-400">{qCount} টি</strong>
                       ) : (
                         <span className="text-rose-600 dark:text-rose-400 font-bold">০ টি (প্রশ্ন যুক্ত করুন)</span>
                       )}

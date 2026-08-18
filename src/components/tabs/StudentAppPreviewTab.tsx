@@ -36,6 +36,8 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
     subscriptionPackages = [],
     submitPayment,
     showToast,
+    getCourseExams,
+    getCourseQuestions,
   } = useAdminData();
 
   const packages = subscriptionPackages.length > 0 
@@ -44,6 +46,7 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
 
   const [activeMobileTab, setActiveMobileTab] = useState<"home" | "exams" | "courses" | "premium">("home");
   const [activeBannerIdx, setActiveBannerIdx] = useState(0);
+  const [expandedCourseDetailsId, setExpandedCourseDetailsId] = useState<string | null>(null);
 
   // Active exam session state
   const [takingExam, setTakingExam] = useState<Exam | null>(initialExam || null);
@@ -491,35 +494,93 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
               /* Mobile Courses Tab */
               <div className="space-y-3">
                 <h3 className="font-bold text-xs text-slate-800">কোর্স ও স্পেশাল ব্যাচ</h3>
-                {courses.map((c) => (
-                  <div key={c.id} className="p-3 bg-white rounded-2xl border border-slate-200 space-y-2">
-                    <img src={c.cover_image} alt={c.title} className="w-full h-24 object-cover rounded-xl" />
-                    <h4 className="font-bold text-xs text-slate-900">{c.title}</h4>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-extrabold text-emerald-600">৳{c.discount_price}</span>
-                      <span className="text-[10px] text-slate-500">মেন্টর: {c.mentor}</span>
-                    </div>
+                {courses.map((c) => {
+                  const courseExams = getCourseExams(c.id);
+                  const isExpanded = expandedCourseDetailsId === c.id;
 
-                    {/* Course Buttons */}
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {c.custom_buttons.filter((b) => b.is_active).map((b) => (
+                  return (
+                    <div key={c.id} className="p-3 bg-white rounded-2xl border border-slate-200 space-y-2">
+                      <img src={c.cover_image} alt={c.title} className="w-full h-24 object-cover rounded-xl" />
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          {c.course_tag}
+                        </span>
+                        <span className="text-[10px] text-purple-700 font-bold bg-purple-50 px-2 py-0.5 rounded">
+                          📝 {courseExams.length} টি পরীক্ষা
+                        </span>
+                      </div>
+
+                      <h4 className="font-bold text-xs text-slate-900">{c.title}</h4>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-extrabold text-emerald-600">৳{c.discount_price}</span>
+                        <span className="text-[10px] text-slate-500">মেন্টর: {c.mentor}</span>
+                      </div>
+
+                      {/* Course Buttons */}
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {c.custom_buttons.filter((b) => b.is_active).map((b) => (
+                          <button
+                            key={b.id}
+                            onClick={() => {
+                              if (b.action_type === "payment_drawer") {
+                                setActiveMobileTab("premium");
+                              } else {
+                                window.open(b.action_value, "_blank");
+                              }
+                            }}
+                            className="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-200 cursor-pointer"
+                          >
+                            {b.label}
+                          </button>
+                        ))}
+
                         <button
-                          key={b.id}
-                          onClick={() => {
-                            if (b.action_type === "payment_drawer") {
-                              setActiveMobileTab("premium");
-                            } else {
-                              window.open(b.action_value, "_blank");
-                            }
-                          }}
-                          className="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-200"
+                          onClick={() => setExpandedCourseDetailsId(isExpanded ? null : c.id)}
+                          className="px-2.5 py-1 rounded-md bg-purple-50 text-purple-700 font-bold text-[10px] border border-purple-200 cursor-pointer flex items-center gap-1"
                         >
-                          {b.label}
+                          <span>{isExpanded ? "পরীক্ষা লুকান" : "পরীক্ষা ও প্রশ্ন দেখুন"}</span>
                         </button>
-                      ))}
+                      </div>
+
+                      {/* Expanded Course Exams List */}
+                      {isExpanded && (
+                        <div className="mt-2 pt-2 border-t border-slate-100 space-y-2 animate-in fade-in">
+                          <h5 className="text-[11px] font-bold text-purple-900 flex items-center justify-between">
+                            <span>সংযুক্ত মডেল টেস্টসমূহ ({courseExams.length}টি):</span>
+                          </h5>
+
+                          {courseExams.length === 0 ? (
+                            <p className="text-[10px] text-slate-400 italic py-1 text-center">
+                              এই কোর্সের জন্য শীঘ্রই মডেল টেস্ট প্রকাশ করা হবে
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {courseExams.map((ex) => (
+                                <div
+                                  key={ex.id}
+                                  className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2 text-[11px]"
+                                >
+                                  <div>
+                                    <span className="font-bold text-slate-800 block leading-tight">{ex.title}</span>
+                                    <span className="text-[9px] text-slate-500">
+                                      {ex.subject} • {ex.duration_minutes} মিনিট • {ex.total_questions || ex.questions?.length || 0} টি প্রশ্ন
+                                    </span>
+                                  </div>
+                                  <button
+                                    onClick={() => handleStartExam(ex)}
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] flex-shrink-0 cursor-pointer"
+                                  >
+                                    টেস্ট দিন
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               /* Mobile Premium & Payment Tab */
