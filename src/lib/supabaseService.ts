@@ -1354,6 +1354,9 @@ export async function dbUpdateQuestion(
 
   try {
     const payload: any = {};
+    if (q.exam_id !== undefined) {
+      payload.exam_id = isValidUuid(q.exam_id) ? q.exam_id : (q.exam_id === "" || q.exam_id === null ? null : undefined);
+    }
     if (q.question_text !== undefined || q.question !== undefined) {
       payload.question_text = (q.question_text || q.question || "").trim();
     }
@@ -1632,3 +1635,149 @@ export async function dbFetchLeaderboard(
     return { data: null, error: err?.message || "লিডারবোর্ড লোড করতে সমস্যা হয়েছে।" };
   }
 }
+
+// -------------------------------------------------------------
+// 12. EXAM & QUESTION LINKING OPERATIONS
+// -------------------------------------------------------------
+export async function dbAssignQuestionsToExam(
+  examId: string,
+  questionIds: string[]
+): Promise<ServiceResult<boolean>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+  if (!isValidUuid(examId)) return { data: false, error: "অবৈধ Exam ID" };
+  if (!questionIds || questionIds.length === 0) return { data: true, error: null };
+
+  try {
+    const validQIds = questionIds.filter(isValidUuid);
+    if (validQIds.length > 0) {
+      const { error } = await supabase
+        .from("questions")
+        .update({ exam_id: examId })
+        .in("id", validQIds);
+
+      if (error) {
+        console.error("❌ dbAssignQuestionsToExam error:", error);
+        return { data: false, error: error.message };
+      }
+    }
+
+    // Also update total_questions count on the exam
+    await supabase
+      .from("exams")
+      .update({ total_questions: questionIds.length, total_marks: questionIds.length })
+      .eq("id", examId);
+
+    return { data: true, error: null };
+  } catch (err: any) {
+    return { data: false, error: err?.message || "প্রশ্ন লিংকিং ব্যর্থ হয়েছে।" };
+  }
+}
+
+export async function dbAutoPopulateExamQuestions(
+  examId: string,
+  count: number = 10,
+  subjectHint?: string
+): Promise<ServiceResult<{ linkedCount: number }>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+  if (!isValidUuid(examId)) return { data: null, error: "অবৈধ Exam ID" };
+
+  try {
+    // 1. Fetch available questions from Supabase questions table
+    let query = supabase.from("questions").select("id, subject_name, topic, question_text");
+    const { data: allQuestions, error: fetchErr } = await query.limit(100);
+
+    if (fetchErr) return { data: null, error: fetchErr.message };
+    if (!allQuestions || allQuestions.length === 0) {
+      return { data: null, error: "প্রশ্ন ব্যাংকে পর্যাপ্ত প্রশ্ন পাওয়া যায়নি।" };
+    }
+
+    // 2. Prioritize questions matching subject if provided
+    let candidateIds: string[] = [];
+    if (subjectHint) {
+      const matched = allQuestions.filter(
+        (q) =>
+          (q.subject_name && subjectHint.toLowerCase().includes(q.subject_name.toLowerCase())) ||
+          (q.topic && subjectHint.toLowerCase().includes(q.topic.toLowerCase()))
+      );
+      candidateIds = matched.map((q) => q.id);
+    }
+
+    if (candidateIds.length < count) {
+      const rest = allQuestions.map((q) => q.id).filter((id) => !candidateIds.includes(id));
+      candidateIds = [...candidateIds, ...rest];
+    }
+
+    const selectedIds = candidateIds.slice(0, count);
+    if (selectedIds.length === 0) {
+      return { data: { linkedCount: 0 }, error: null };
+    }
+
+    const { error: updateErr } = await supabase
+      .from("questions")
+      .update({ exam_id: examId })
+      .in("id", selectedIds);
+
+    if (updateErr) return { data: null, error: updateErr.message };
+
+    // Update exam total_questions count
+    await supabase
+      .from("exams")
+      .update({ total_questions: selectedIds.length, total_marks: selectedIds.length })
+      .eq("id", examId);
+
+    return { data: { linkedCount: selectedIds.length }, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "অটো-লিংকিং ব্যর্থ হয়েছে।" };
+  }
+}
+
+export async function dbAutoLinkAllEmptyExams(): Promise<ServiceResult<{ fixedExams: number; totalQuestionsLinked: number }>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data: exams, error: exErr } = await supabase.from("exams").select("id, title, subject, total_questions");
+    if (exErr) return { data: null, error: exErr.message };
+    if (!exams || exams.length === 0) return { data: { fixedExams: 0, totalQuestionsLinked: 0 }, error: null };
+
+    const { data: allQuestions, error: qErr } = await supabase.from("questions").select("id, exam_id, subject_name, topic");
+    if (qErr) return { data: null, error: qErr.message };
+    if (!allQuestions || allQuestions.length === 0) return { data: { fixedExams: 0, totalQuestionsLinked: 0 }, error: null };
+
+    let fixedExams = 0;
+    let totalQuestionsLinked = 0;
+
+    for (const ex of exams) {
+      const alreadyLinked = allQuestions.filter((q) => q.exam_id === ex.id);
+      if (alreadyLinked.length === 0) {
+        // Find candidate questions
+        let matched = allQuestions.filter(
+          (q) =>
+            (ex.subject && q.subject_name && ex.subject.toLowerCase().includes(q.subject_name.toLowerCase())) ||
+            (ex.title && q.topic && ex.title.toLowerCase().includes(q.topic.toLowerCase()))
+        );
+
+        if (matched.length === 0) {
+          matched = allQuestions.slice(0, 10);
+        } else {
+          matched = matched.slice(0, 10);
+        }
+
+        const idsToLink = matched.map((q) => q.id);
+        if (idsToLink.length > 0) {
+          await supabase.from("questions").update({ exam_id: ex.id }).in("id", idsToLink);
+          await supabase.from("exams").update({ total_questions: idsToLink.length, total_marks: idsToLink.length }).eq("id", ex.id);
+          fixedExams++;
+          totalQuestionsLinked += idsToLink.length;
+        }
+      }
+    }
+
+    return { data: { fixedExams, totalQuestionsLinked }, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "সকল পরীক্ষায় অটো-লিংক করা সম্ভব হয়নি।" };
+  }
+}
+

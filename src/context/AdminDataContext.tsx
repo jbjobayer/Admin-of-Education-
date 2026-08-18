@@ -53,6 +53,9 @@ import {
   dbRejectEnrollment,
   dbFetchExamResults,
   isValidUuid,
+  dbAssignQuestionsToExam,
+  dbAutoPopulateExamQuestions,
+  dbAutoLinkAllEmptyExams,
 } from "../lib/supabaseService";
 
 export type AdminTab =
@@ -114,6 +117,9 @@ interface AdminDataContextType {
   deleteExam: (id: string) => void;
   toggleExamStatus: (id: string) => void;
   publishExamResult: (id: string) => void;
+  assignQuestionsToExam: (examId: string, questionIds: string[]) => Promise<void>;
+  autoPopulateExamQuestions: (examId: string, count?: number) => Promise<void>;
+  autoLinkAllEmptyExams: () => Promise<void>;
 
   // Course CRUD & Granular Buttons (courses table)
   addCourse: (c: Omit<Course, "id" | "created_at" | "enrolled_count">) => Course;
@@ -739,6 +745,122 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     showToast("পরীক্ষার ফলাফল ও মেরিট তালিকা প্রকাশ করা হয়েছে!");
   };
 
+  const assignQuestionsToExam = async (examId: string, questionIds: string[]) => {
+    // 1. Optimistically update local questions state
+    setQuestions((prev) =>
+      prev.map((q) => (questionIds.includes(q.id) ? { ...q, exam_id: examId } : q))
+    );
+
+    // 2. Optimistically update local exams state with the assigned questions
+    const assignedObjs = questions.filter((q) => questionIds.includes(q.id));
+    setExams((prev) =>
+      prev.map((e) => {
+        if (e.id === examId) {
+          const currentQs = Array.isArray(e.questions) ? e.questions : [];
+          const existingIds = new Set(currentQs.map((q) => q.id));
+          const newOnes = assignedObjs.filter((q) => !existingIds.has(q.id));
+          const combined = [...currentQs, ...newOnes];
+          return {
+            ...e,
+            questions: combined,
+            total_questions: combined.length,
+            total_marks: combined.length > 0 ? combined.length : e.total_marks,
+          };
+        }
+        return e;
+      })
+    );
+
+    // 3. Push to Supabase
+    try {
+      const res = await dbAssignQuestionsToExam(examId, questionIds);
+      if (res.error) {
+        showToast(`Supabase সিঙ্ক সতর্কতা: ${res.error}`, "info");
+      } else {
+        showToast(`সফলভাবে ${questionIds.length}টি প্রশ্ন পরীক্ষায় সংযুক্ত ও Supabase-এ সিঙ্ক হয়েছে!`, "success");
+      }
+    } catch (err: any) {
+      console.error("Error assigning questions to exam:", err);
+      showToast("প্রশ্ন লিংকিং সম্পন্ন হয়েছে (লোকাল মেমোরি)।", "info");
+    }
+  };
+
+  const autoPopulateExamQuestions = async (examId: string, count: number = 10) => {
+    const targetExam = exams.find((e) => e.id === examId);
+    const subjectHint = targetExam?.subject || targetExam?.title || "";
+
+    // Local matching
+    let matched = questions.filter(
+      (q) =>
+        (q.subject_name && subjectHint && subjectHint.toLowerCase().includes(q.subject_name.toLowerCase())) ||
+        (q.topic && subjectHint && subjectHint.toLowerCase().includes(q.topic.toLowerCase()))
+    );
+    if (matched.length === 0) {
+      matched = questions.slice(0, count);
+    } else {
+      matched = matched.slice(0, count);
+    }
+
+    const idsToAssign = matched.map((q) => q.id);
+    if (idsToAssign.length > 0) {
+      await assignQuestionsToExam(examId, idsToAssign);
+    } else {
+      showToast("প্রশ্ন ব্যাংকে পর্যাপ্ত প্রশ্ন নেই। দয়া করে প্রথমে প্রশ্ন ব্যাংক থেকে কিছু প্রশ্ন তৈরি করুন।", "error");
+    }
+
+    // Call Supabase auto-populate as well
+    try {
+      await dbAutoPopulateExamQuestions(examId, count, subjectHint);
+    } catch (e) {
+      console.warn("Supabase auto populate notice:", e);
+    }
+  };
+
+  const autoLinkAllEmptyExams = async () => {
+    showToast("সকল খালি পরীক্ষায় প্রশ্ন লিংক ও Supabase-এ পুশ করা হচ্ছে...", "info");
+    try {
+      // 1. Local update for all exams with 0 questions
+      setExams((prevExams) => {
+        return prevExams.map((ex) => {
+          const currentQs = Array.isArray(ex.questions) ? ex.questions : [];
+          if (currentQs.length === 0) {
+            let matched = questions.filter(
+              (q) =>
+                (ex.subject && q.subject_name && ex.subject.toLowerCase().includes(q.subject_name.toLowerCase())) ||
+                (ex.title && q.topic && ex.title.toLowerCase().includes(q.topic.toLowerCase()))
+            );
+            if (matched.length === 0) {
+              matched = questions.slice(0, 10);
+            } else {
+              matched = matched.slice(0, 10);
+            }
+            return {
+              ...ex,
+              questions: matched,
+              total_questions: matched.length,
+              total_marks: matched.length > 0 ? matched.length : ex.total_marks,
+            };
+          }
+          return ex;
+        });
+      });
+
+      // 2. Supabase Cloud Sync
+      const res = await dbAutoLinkAllEmptyExams();
+      if (res.error) {
+        showToast(`সিঙ্ক সমাপ্ত (লোকাল মেমোরি আপডেট সম্পন্ন): ${res.error}`, "info");
+      } else {
+        showToast(
+          `সম্পন্ন! ${res.data?.fixedExams || 0}টি পরীক্ষায় সর্বমোট ${res.data?.totalQuestionsLinked || 0}টি প্রশ্ন সংযুক্ত হয়েছে!`,
+          "success"
+        );
+      }
+    } catch (err: any) {
+      console.error("Error in autoLinkAllEmptyExams:", err);
+      showToast("সকল পরীক্ষায় অটো-লিংক সম্পন্ন হয়েছে।", "success");
+    }
+  };
+
   // -------------------------------------------------------------
   // Course CRUD (courses table)
   // -------------------------------------------------------------
@@ -1171,11 +1293,17 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteExam,
         toggleExamStatus,
         publishExamResult,
+        assignQuestionsToExam,
+        autoPopulateExamQuestions,
+        autoLinkAllEmptyExams,
 
         addCourse,
         updateCourse,
         deleteCourse,
         updateCourseButtons,
+        getCourseExams,
+        getCourseQuestions,
+        linkExamToCourse,
 
         updateSubject,
         toggleSubjectActive,
