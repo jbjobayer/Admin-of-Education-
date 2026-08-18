@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import { Question, QuestionDifficulty, ExamTargetCategory } from "../../types";
+import { RlsNoticeBanner } from "../RlsNoticeBanner";
 
 interface QuestionBankHubProps {
   onOpenManualForm: (questionToEdit?: Question) => void;
@@ -154,6 +155,8 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
 
   return (
     <div className="space-y-6 pb-12">
+      <RlsNoticeBanner />
+
       {/* 4 Ways to Add Questions Card */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-100 dark:border-slate-800">

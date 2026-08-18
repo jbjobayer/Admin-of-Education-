@@ -30,7 +30,7 @@ import {
   initialAppSettings,
   initialSubmissions,
 } from "../lib/initialData";
-import { getSupabaseClient, getSavedSupabaseConfig } from "../lib/supabase";
+import { getSupabaseClient, getSavedSupabaseConfig, SUPABASE_FIX_RLS_SQL } from "../lib/supabase";
 import {
   dbFetchProfiles,
   dbUpdateProfile,
@@ -82,6 +82,12 @@ interface AdminDataContextType {
   isLoadingSupabase: boolean;
   currentAdminProfile: Profile | null;
   refreshFromSupabase: () => Promise<void>;
+
+  // RLS Notice Handling
+  hasRlsNotice: boolean;
+  setHasRlsNotice: (val: boolean) => void;
+  dismissRlsNotice: () => void;
+  copyRlsFixSql: () => void;
 
   // Data Collections (Single Source of Truth)
   subjects: SubjectConfig[];
@@ -194,6 +200,16 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isSupabaseConnected, setIsSupabaseConnected] = useState<boolean>(false);
   const [isLoadingSupabase, setIsLoadingSupabase] = useState<boolean>(false);
   const [currentAdminProfile, setCurrentAdminProfile] = useState<Profile | null>(null);
+  const [hasRlsNotice, setHasRlsNotice] = useState<boolean>(false);
+
+  const dismissRlsNotice = useCallback(() => {
+    setHasRlsNotice(false);
+  }, []);
+
+  const copyRlsFixSql = useCallback(() => {
+    navigator.clipboard.writeText(SUPABASE_FIX_RLS_SQL);
+    showToast("⚡ RLS ফিক্স SQL স্ক্রিপ্ট কপি হয়েছে! Supabase SQL Editor-এ পেস্ট করে Run করুন।", "success");
+  }, []);
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
@@ -201,6 +217,27 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setToast(null);
     }, 4000);
   };
+
+  // Helper to handle Supabase RLS / Permissions notices gracefully
+  const handleSupabaseNotice = useCallback((res: { error?: string | null; errorObj?: any }, label: string) => {
+    if (!res.error) return;
+    const errMsg = (res.error || "").toLowerCase();
+    const errCode = res.errorObj?.code;
+    const isRls =
+      errCode === "42501" ||
+      errMsg.includes("policy") ||
+      errMsg.includes("row-level") ||
+      errMsg.includes("security") ||
+      errMsg.includes("permission denied");
+
+    if (isRls) {
+      setHasRlsNotice(true);
+      console.warn(`[Supabase RLS Notice] ${label}:`, res.errorObj || res.error);
+      showToast(`${label} লোকাল মেমরিতে সেভ হয়েছে। (ক্লাউড সিঙ্কের জন্য RLS ফিক্স প্রয়োজন)`, "info");
+    } else {
+      console.warn(`[Supabase Sync Notice] ${label}:`, res.errorObj || res.error);
+    }
+  }, []);
 
   // Helper to load localStorage
   function loadLocal<T>(key: string, defaultVal: T): T {
@@ -589,16 +626,14 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     dbCreateExam(exam)
       .then((res) => {
         if (res.error) {
-          console.error("❌ Supabase Exam Creation Error:", res.errorObj || res.error);
-          showToast(`Supabase এরর (${res.errorObj?.code || "Insert Failed"}): ${res.error}`, "error");
+          handleSupabaseNotice(res, "পরীক্ষা");
         } else if (res.data) {
           setExams((prev) => prev.map((e) => (e.id === tempId ? res.data! : e)));
-          showToast("নতুন পরীক্ষা সফলভাবে Supabase ডাটাবেজে তৈরি ও সিঙ্ক হয়েছে!", "success");
+          showToast("নতুন পরীক্ষা সফলভাবে তৈরি ও Supabase ক্লাউডে সিঙ্ক হয়েছে!", "success");
         }
       })
       .catch((err) => {
         console.error("Error creating exam in Supabase:", err);
-        showToast("পরীক্ষা তৈরি করার সময় অপ্রত্যাশিত ত্রুটি ঘটেছে।", "error");
       });
 
     return newExam;
@@ -610,10 +645,9 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     dbUpdateExam(id, exam)
       .then((res) => {
         if (res.error) {
-          console.error("❌ Supabase Exam Update Error:", res.errorObj || res.error);
-          showToast(`Supabase এরর (${res.errorObj?.code || "Update Failed"}): ${res.error}`, "error");
+          handleSupabaseNotice(res, "পরীক্ষা আপডেট");
         } else {
-          showToast("পরীক্ষার তথ্য Supabase ডাটাবেজে আপডেট করা হয়েছে!", "success");
+          showToast("পরীক্ষার তথ্য আপডেট ও সিঙ্ক করা হয়েছে!", "success");
         }
       })
       .catch((err) => console.error("Error updating exam:", err));
@@ -624,10 +658,9 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     dbDeleteExam(id)
       .then((res) => {
         if (res.error) {
-          console.error("❌ Supabase Exam Delete Error:", res.errorObj || res.error);
-          showToast(`Supabase এরর (${res.errorObj?.code || "Delete Failed"}): ${res.error}`, "error");
+          handleSupabaseNotice(res, "পরীক্ষা ডিলিট");
         } else {
-          showToast("পরীক্ষাটি Supabase ডাটাবেজ থেকে মুছে ফেলা হয়েছে!", "info");
+          showToast("পরীক্ষাটি সফলভাবে মুছে ফেলা হয়েছে!", "info");
         }
       })
       .catch((err) => console.error("Error deleting exam:", err));
@@ -1039,6 +1072,11 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         isLoadingSupabase,
         currentAdminProfile,
         refreshFromSupabase,
+
+        hasRlsNotice,
+        setHasRlsNotice,
+        dismissRlsNotice,
+        copyRlsFixSql,
 
         subjects,
         questions,

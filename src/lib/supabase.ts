@@ -482,23 +482,28 @@ ALTER PUBLICATION supabase_realtime ADD TABLE
 // 1-Click RLS Security Fix SQL for Existing Supabase Projects (Resolves 42501 errors)
 export const SUPABASE_FIX_RLS_SQL = `-- ==============================================================================
 -- ⚡ TAMREEN 1-CLICK RLS FIX SCRIPT (Resolves 42501 Permission Error)
--- Run this in Supabase Dashboard -> SQL Editor -> Run
+-- Copy and run this script in Supabase Dashboard -> SQL Editor -> Run (F5)
 -- ==============================================================================
 
--- 1. Ensure RLS is enabled on all tables
-ALTER TABLE IF EXISTS public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.courses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.course_tabs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.course_routines ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.course_syllabus_modules ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.course_syllabus_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.course_materials ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.exams ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.questions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.course_enrollments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.exam_results ENABLE ROW LEVEL SECURITY;
+-- 1. Disable Row Level Security on all tables to allow unrestricted admin & applet access
+ALTER TABLE IF EXISTS public.profiles DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.courses DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.course_tabs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.course_routines DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.course_syllabus_modules DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.course_syllabus_items DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.course_materials DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.exams DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.questions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.course_enrollments DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.exam_results DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.subjects DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.job_circulars DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.payments DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.submissions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.app_settings DISABLE ROW LEVEL SECURITY;
 
--- 2. Drop any legacy restrictive policies
+-- 2. Drop all legacy restrictive policies
 DROP POLICY IF EXISTS "Admins have full access on profiles" ON public.profiles;
 DROP POLICY IF EXISTS "Admins have full access on courses" ON public.courses;
 DROP POLICY IF EXISTS "Admins have full access on exams" ON public.exams;
@@ -506,37 +511,8 @@ DROP POLICY IF EXISTS "Admins have full access on questions" ON public.questions
 DROP POLICY IF EXISTS "Admins have full access on course_enrollments" ON public.course_enrollments;
 DROP POLICY IF EXISTS "Admins have full access on exam_results" ON public.exam_results;
 
--- 3. Create full unrestricted access policies for Tamreen Applet
-DROP POLICY IF EXISTS "Allow all on profiles" ON public.profiles;
-CREATE POLICY "Allow all on profiles" ON public.profiles FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow all on courses" ON public.courses;
-CREATE POLICY "Allow all on courses" ON public.courses FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow all on course_tabs" ON public.course_tabs;
-CREATE POLICY "Allow all on course_tabs" ON public.course_tabs FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow all on course_routines" ON public.course_routines;
-CREATE POLICY "Allow all on course_routines" ON public.course_routines FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow all on course_syllabus_modules" ON public.course_syllabus_modules;
-CREATE POLICY "Allow all on course_syllabus_modules" ON public.course_syllabus_modules FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow all on course_syllabus_items" ON public.course_syllabus_items;
-CREATE POLICY "Allow all on course_syllabus_items" ON public.course_syllabus_items FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow all on course_materials" ON public.course_materials;
-CREATE POLICY "Allow all on course_materials" ON public.course_materials FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow all on exams" ON public.exams;
-CREATE POLICY "Allow all on exams" ON public.exams FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow all on questions" ON public.questions;
-CREATE POLICY "Allow all on questions" ON public.questions FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow all on course_enrollments" ON public.course_enrollments;
-CREATE POLICY "Allow all on course_enrollments" ON public.course_enrollments FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow all on exam_results" ON public.exam_results;
-CREATE POLICY "Allow all on exam_results" ON public.exam_results FOR ALL USING (true) WITH CHECK (true);
+-- 3. Grant full permissions to anon, authenticated and service_role
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
 `;

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import { Exam, ExamCategory, ExamStatus } from "../../types";
+import { RlsNoticeBanner } from "../RlsNoticeBanner";
 
 interface ExamModelTestManagerProps {
   onOpenExamForm: (examToEdit?: Exam) => void;
@@ -84,6 +85,8 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
 
   return (
     <div className="space-y-6 pb-12">
+      <RlsNoticeBanner />
+
       {/* Header & Create Exam Action */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>

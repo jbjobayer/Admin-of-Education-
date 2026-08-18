@@ -32,6 +32,7 @@ import {
   Cell,
 } from "recharts";
 import { useAdminData } from "../../context/AdminDataContext";
+import { RlsNoticeBanner } from "../RlsNoticeBanner";
 
 interface DashboardOverviewProps {
   onOpenAiGenerator: () => void;
@@ -108,6 +109,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
   return (
     <div className="space-y-6 pb-12">
+      <RlsNoticeBanner />
+
       {/* 1-Click Quick Action Hero Bar */}
       <div className="bg-gradient-to-r from-emerald-900 via-emerald-800 to-teal-900 rounded-3xl p-6 text-white shadow-xl shadow-emerald-950/20 border border-emerald-700/40 relative overflow-hidden">
         <div className="absolute right-0 top-0 translate-x-8 -translate-y-8 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
