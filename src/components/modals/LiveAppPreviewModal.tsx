@@ -4,7 +4,7 @@ import { StudentAppPreviewTab } from "../tabs/StudentAppPreviewTab";
 import { useAdminData } from "../../context/AdminDataContext";
 
 export const LiveAppPreviewModal: React.FC = () => {
-  const { isPreviewModalOpen, setIsPreviewModalOpen } = useAdminData();
+  const { isPreviewModalOpen, setIsPreviewModalOpen, previewExam } = useAdminData();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -57,7 +57,7 @@ export const LiveAppPreviewModal: React.FC = () => {
 
         {/* Live Simulator View */}
         <div className="flex-1 overflow-y-auto">
-          <StudentAppPreviewTab />
+          <StudentAppPreviewTab initialExam={previewExam} />
         </div>
       </div>
     </div>

@@ -169,6 +169,9 @@ interface AdminDataContextType {
   // Preview Modal & Mobile Drawer
   isPreviewModalOpen: boolean;
   setIsPreviewModalOpen: (open: boolean) => void;
+  previewExam: Exam | null;
+  setPreviewExam: (exam: Exam | null) => void;
+  openExamInSimulator: (exam: Exam) => void;
   isMobileDrawerOpen: boolean;
   setIsMobileDrawerOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 
@@ -193,6 +196,7 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
   const [searchQuery, setSearchQuery] = useState("");
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+  const [previewExam, setPreviewExam] = useState<Exam | null>(null);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
@@ -285,6 +289,34 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [appSettings, setAppSettings] = useState<AppSettings>(() => {
     return loadLocal("appSettings", initialAppSettings);
   });
+
+  const openExamInSimulator = useCallback((exam: Exam) => {
+    let resolvedExam = { ...exam };
+    let examQuestions = Array.isArray(resolvedExam.questions) ? [...resolvedExam.questions] : [];
+
+    if (examQuestions.length === 0) {
+      const matchingByExamId = questions.filter((q) => q.exam_id && q.exam_id === exam.id);
+      if (matchingByExamId.length > 0) {
+        examQuestions = matchingByExamId;
+      } else {
+        const matchingBySubject = questions.filter(
+          (q) =>
+            (q.subject_name && exam.subject && q.subject_name.toLowerCase().includes(exam.subject.toLowerCase())) ||
+            (q.subject_id && exam.subject && exam.subject.includes(q.subject_id))
+        );
+        if (matchingBySubject.length > 0) {
+          examQuestions = matchingBySubject.slice(0, exam.total_questions || 10);
+        } else if (questions.length > 0) {
+          examQuestions = questions.slice(0, exam.total_questions || 10);
+        }
+      }
+      resolvedExam.questions = examQuestions;
+      resolvedExam.total_questions = examQuestions.length;
+    }
+
+    setPreviewExam(resolvedExam);
+    setIsPreviewModalOpen(true);
+  }, [questions]);
 
   // Fetch real data from Supabase
   const refreshFromSupabase = useCallback(async () => {
@@ -1133,6 +1165,9 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         isPreviewModalOpen,
         setIsPreviewModalOpen,
+        previewExam,
+        setPreviewExam,
+        openExamInSimulator,
         isMobileDrawerOpen,
         setIsMobileDrawerOpen,
 

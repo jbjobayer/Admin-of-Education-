@@ -145,7 +145,18 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       if (examToEdit.questions && examToEdit.questions.length > 0) {
         setExamQuestions(examToEdit.questions);
       } else {
-        setExamQuestions([]);
+        // Try to match questions linked by exam_id or subject from question bank
+        const linked = questions.filter((q) => q.exam_id && q.exam_id === examToEdit.id);
+        if (linked.length > 0) {
+          setExamQuestions(linked);
+        } else {
+          const subMatch = questions.filter(
+            (q) =>
+              (q.subject_name && examToEdit.subject && q.subject_name.toLowerCase().includes(examToEdit.subject.toLowerCase())) ||
+              (q.subject_id && examToEdit.subject && examToEdit.subject.includes(q.subject_id))
+          );
+          setExamQuestions(subMatch.length > 0 ? subMatch.slice(0, 10) : questions.slice(0, 5));
+        }
       }
 
       setManualSubject(examToEdit.subject || "নাহু ও সরফ");

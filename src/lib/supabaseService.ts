@@ -599,38 +599,127 @@ export async function dbFetchExams(): Promise<ServiceResult<Exam[]>> {
         },
       };
     }
-    const formatted: Exam[] = ((data as any[]) || []).map((row) => ({
-      id: row.id,
-      course_id: row.course_id || undefined,
-      title: row.title || "মডেল টেস্ট",
-      description: row.description || "",
-      exam_type: row.exam_type || "model_test",
-      total_questions: Number(row.total_questions || (Array.isArray(row.questions) ? row.questions.length : 0)),
-      duration_minutes: Number(row.duration_minutes || 30),
-      total_marks: Number(row.total_marks || 50),
-      negative_mark: Number(row.negative_mark ?? row.negative_marking ?? 0.25),
-      pass_mark: Number(row.pass_mark ?? row.pass_marks ?? 20),
-      exam_date: row.exam_date || row.start_time || new Date().toISOString(),
-      is_free: Boolean(row.is_free),
-      is_published: row.is_published !== undefined ? Boolean(row.is_published) : true,
-      sort_order: Number(row.sort_order || 0),
-      created_at: row.created_at || new Date().toISOString(),
-      updated_at: row.updated_at,
-      // UI compatibility fields:
-      category: row.category || (row.exam_type === "live_exam" ? "daily_live" : row.exam_type === "full_test" ? "premium_ntrca" : "weekly_model_test"),
-      subject: row.subject || "সাধারণ ও মাদ্রাসা কারিকুলাম",
-      syllabus: row.syllabus || row.description || "সম্পূর্ণ সিলেবাস ভিত্তিক মডেল টেস্ট",
-      pass_marks: Number(row.pass_marks ?? row.pass_mark ?? 20),
-      negative_marking: Number(row.negative_marking ?? row.negative_mark ?? 0.25),
-      start_time: row.start_time || row.exam_date || new Date().toISOString(),
-      end_time: row.end_time || new Date(Date.now() + 86400000).toISOString(),
-      result_published: Boolean(row.result_published),
-      status: row.status || (row.is_published ? "live" : "upcoming"),
-      questions: Array.isArray(row.questions) ? row.questions : [],
-      participant_count: Number(row.participant_count || 0),
-      banner_image: row.banner_image || "",
-      is_featured: Boolean(row.is_featured),
-    }));
+
+    // Also fetch all questions from Supabase questions table to link with exams
+    let allQuestionsMap: Record<string, Question[]> = {};
+    let allQuestionsList: Question[] = [];
+    try {
+      const { data: qData, error: qError } = await supabase
+        .from("questions")
+        .select("*")
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: false });
+
+      if (!qError && qData) {
+        allQuestionsList = (qData as any[]).map((row) => {
+          const optionsArr = [
+            row.option_a || "",
+            row.option_b || "",
+            row.option_c || "",
+            row.option_d || "",
+          ];
+          let correctIdx = 0;
+          if (row.correct_option === "option_b" || row.correct_option === "b" || row.correct_option === "১") correctIdx = 1;
+          else if (row.correct_option === "option_c" || row.correct_option === "c" || row.correct_option === "২") correctIdx = 2;
+          else if (row.correct_option === "option_d" || row.correct_option === "d" || row.correct_option === "৩") correctIdx = 3;
+
+          return {
+            id: row.id,
+            exam_id: row.exam_id || undefined,
+            question_number: row.question_number || 1,
+            question_text: row.question_text || row.question || "",
+            arabic_text: row.arabic_text || undefined,
+            option_a: row.option_a || optionsArr[0] || "",
+            option_b: row.option_b || optionsArr[1] || "",
+            option_c: row.option_c || optionsArr[2] || "",
+            option_d: row.option_d || optionsArr[3] || "",
+            correct_option: row.correct_option || "option_a",
+            explanation: row.explanation || "",
+            source: row.source || "",
+            marks: Number(row.marks || 1),
+            negative_marks: Number(row.negative_marks || 0.25),
+            image_url: row.image_url || "",
+            sort_order: row.sort_order || 0,
+            created_at: row.created_at || new Date().toISOString(),
+            question: row.question_text || row.question || "",
+            options: optionsArr,
+            correct_index: correctIdx,
+            topic: row.topic || "সাধারণ",
+            subject_id: row.subject_id || "sub-1",
+            subject_name: row.subject_name || "মাদ্রাসা কারিকুলাম",
+            difficulty: row.difficulty || "Medium",
+            exam_type: row.exam_type || "NTRCA",
+            language: row.language || "bn",
+          };
+        });
+
+        for (const q of allQuestionsList) {
+          if (q.exam_id) {
+            if (!allQuestionsMap[q.exam_id]) {
+              allQuestionsMap[q.exam_id] = [];
+            }
+            allQuestionsMap[q.exam_id].push(q);
+          }
+        }
+      }
+    } catch (errQ) {
+      console.warn("Could not batch load questions for exams:", errQ);
+    }
+
+    const formatted: Exam[] = ((data as any[]) || []).map((row) => {
+      // 1. Check if direct row has questions
+      let examQuestions: Question[] = Array.isArray(row.questions) && row.questions.length > 0 ? row.questions : [];
+      
+      // 2. If not, get questions attached by exam_id in questions table
+      if (examQuestions.length === 0 && row.id && allQuestionsMap[row.id]) {
+        examQuestions = allQuestionsMap[row.id];
+      }
+
+      // 3. If still empty, match questions by subject if available in allQuestionsList
+      if (examQuestions.length === 0 && allQuestionsList.length > 0) {
+        const subMatch = allQuestionsList.filter(
+          (q) =>
+            (row.subject && q.subject_name && q.subject_name.toLowerCase().includes(row.subject.toLowerCase())) ||
+            (row.subject && q.subject_id && row.subject.includes(q.subject_id))
+        );
+        if (subMatch.length > 0) {
+          examQuestions = subMatch.slice(0, row.total_questions || 10);
+        }
+      }
+
+      return {
+        id: row.id,
+        course_id: row.course_id || undefined,
+        title: row.title || "মডেল টেস্ট",
+        description: row.description || "",
+        exam_type: row.exam_type || "model_test",
+        total_questions: Number(examQuestions.length || row.total_questions || 0),
+        duration_minutes: Number(row.duration_minutes || 30),
+        total_marks: Number(row.total_marks || (examQuestions.length > 0 ? examQuestions.length : 50)),
+        negative_mark: Number(row.negative_mark ?? row.negative_marking ?? 0.25),
+        pass_mark: Number(row.pass_mark ?? row.pass_marks ?? 20),
+        exam_date: row.exam_date || row.start_time || new Date().toISOString(),
+        is_free: Boolean(row.is_free),
+        is_published: row.is_published !== undefined ? Boolean(row.is_published) : true,
+        sort_order: Number(row.sort_order || 0),
+        created_at: row.created_at || new Date().toISOString(),
+        updated_at: row.updated_at,
+        // UI compatibility fields:
+        category: row.category || (row.exam_type === "live_exam" ? "daily_live" : row.exam_type === "full_test" ? "premium_ntrca" : "weekly_model_test"),
+        subject: row.subject || "সাধারণ ও মাদ্রাসা কারিকুলাম",
+        syllabus: row.syllabus || row.description || "সম্পূর্ণ সিলেবাস ভিত্তিক মডেল টেস্ট",
+        pass_marks: Number(row.pass_marks ?? row.pass_mark ?? 20),
+        negative_marking: Number(row.negative_marking ?? row.negative_mark ?? 0.25),
+        start_time: row.start_time || row.exam_date || new Date().toISOString(),
+        end_time: row.end_time || new Date(Date.now() + 86400000).toISOString(),
+        result_published: Boolean(row.result_published),
+        status: row.status || (row.is_published ? "live" : "upcoming"),
+        questions: examQuestions,
+        participant_count: Number(row.participant_count || 0),
+        banner_image: row.banner_image || "",
+        is_featured: Boolean(row.is_featured),
+      };
+    });
 
     return { data: formatted, error: null };
   } catch (err: any) {

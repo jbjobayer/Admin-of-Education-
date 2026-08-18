@@ -39,6 +39,7 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
     toggleLiveExamBanner,
     appSettings,
     searchQuery,
+    openExamInSimulator,
   } = useAdminData();
 
   const [activeCategory, setActiveCategory] = useState<string>("all");
@@ -243,8 +244,15 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
                 {/* Attached Questions Summary */}
                 <div className="mt-3 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
                   <div className="flex items-center gap-1.5">
-                    <HelpCircle className="w-4 h-4 text-emerald-600" />
-                    <span>সংযুক্ত প্রশ্ন: <strong>{(exam.questions || []).length}</strong> টি</span>
+                    <HelpCircle className={`w-4 h-4 ${(exam.questions || []).length > 0 ? "text-emerald-600" : "text-rose-500"}`} />
+                    <span>
+                      সংযুক্ত প্রশ্ন:{" "}
+                      {(exam.questions || []).length > 0 ? (
+                        <strong className="text-emerald-700 dark:text-emerald-400">{(exam.questions || []).length} টি</strong>
+                      ) : (
+                        <span className="text-rose-600 dark:text-rose-400 font-bold">০ টি (প্রশ্ন যুক্ত করুন)</span>
+                      )}
+                    </span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Users className="w-4 h-4 text-amber-600" />
@@ -254,14 +262,30 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
               </div>
 
               {/* Bottom Actions Bar */}
-              <div className="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
-                <button
-                  onClick={() => onOpenLiveSimulatorForExam(exam)}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 text-emerald-700 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer"
-                >
-                  <Eye className="w-4 h-4" />
-                  <span>শিক্ষার্থী হিসেবে পরীক্ষা দিন</span>
-                </button>
+              <div className="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (onOpenLiveSimulatorForExam) {
+                        onOpenLiveSimulatorForExam(exam);
+                      }
+                      openExamInSimulator(exam);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
+                  >
+                    <Eye className="w-4 h-4" />
+                    <span>পরীক্ষা দিন</span>
+                  </button>
+
+                  <button
+                    onClick={() => onOpenExamForm(exam)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer border border-slate-200 dark:border-slate-700"
+                    title="প্রশ্ন যোগ বা পরিমার্জন করুন"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>প্রশ্ন ম্যানেজ</span>
+                  </button>
+                </div>
 
                 <div className="flex items-center gap-2">
                   <button

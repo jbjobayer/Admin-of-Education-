@@ -29,6 +29,7 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
   const {
     appSettings,
     exams,
+    questions = [],
     subjects,
     courses,
     jobCirculars,
@@ -66,13 +67,46 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
 
   const activeBanners = appSettings?.home_banners?.filter((b) => b.is_active) || [];
 
+  // Helper to ensure exam always has its questions resolved
+  const resolveExamWithQuestions = (exam: Exam): Exam => {
+    let resolvedExam = { ...exam };
+    let examQuestions = Array.isArray(resolvedExam.questions) ? [...resolvedExam.questions] : [];
+
+    // If exam.questions is empty, dynamically resolve from questions bank
+    if (examQuestions.length === 0) {
+      // 1. Try matching by exam_id in global questions
+      const matchingByExamId = questions.filter((q) => q.exam_id && q.exam_id === exam.id);
+      if (matchingByExamId.length > 0) {
+        examQuestions = matchingByExamId;
+      } else {
+        // 2. Try matching by subject
+        const matchingBySubject = questions.filter(
+          (q) =>
+            (q.subject_name && exam.subject && q.subject_name.toLowerCase().includes(exam.subject.toLowerCase())) ||
+            (q.subject_id && exam.subject && exam.subject.includes(q.subject_id)) ||
+            (exam.syllabus && q.topic && exam.syllabus.toLowerCase().includes(q.topic.toLowerCase()))
+        );
+        if (matchingBySubject.length > 0) {
+          examQuestions = matchingBySubject.slice(0, exam.total_questions || 10);
+        } else if (questions.length > 0) {
+          // 3. Fallback to question bank
+          examQuestions = questions.slice(0, exam.total_questions || 10);
+        }
+      }
+      resolvedExam.questions = examQuestions;
+      resolvedExam.total_questions = examQuestions.length;
+    }
+
+    return resolvedExam;
+  };
+
   useEffect(() => {
     if (initialExam) {
-      setTakingExam(initialExam);
+      setTakingExam(resolveExamWithQuestions(initialExam));
       setSelectedAnswers({});
       setExamSubmitted(false);
     }
-  }, [initialExam]);
+  }, [initialExam, questions]);
 
   // Rotate banners every 4s
   useEffect(() => {
@@ -84,7 +118,8 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
   }, [activeBanners.length]);
 
   const handleStartExam = (exam: Exam) => {
-    setTakingExam(exam);
+    const resolved = resolveExamWithQuestions(exam);
+    setTakingExam(resolved);
     setSelectedAnswers({});
     setExamSubmitted(false);
   };
@@ -242,8 +277,26 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
                     </div>
 
                     {((takingExam.questions || []).length === 0) ? (
-                      <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-2xl border border-slate-200">
-                        এই পরীক্ষায় এখনো কোনো প্রশ্ন যুক্ত করা হয়নি।
+                      <div className="p-6 text-center text-xs text-slate-600 bg-emerald-50/50 rounded-2xl border border-emerald-200/60 space-y-3">
+                        <p className="font-semibold text-slate-700">এই পরীক্ষায় এখনো কোনো নির্দিষ্ট প্রশ্ন লোড হয়নি।</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const fallbackList = questions.length > 0 ? questions.slice(0, 10) : [];
+                            setTakingExam((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    questions: fallbackList,
+                                    total_questions: fallbackList.length,
+                                  }
+                                : null
+                            );
+                          }}
+                          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm cursor-pointer"
+                        >
+                          প্রশ্ন ব্যাংক থেকে ১০টি প্রশ্ন দিয়ে শুরু করুন
+                        </button>
                       </div>
                     ) : (
                       (takingExam.questions || []).map((q, qIdx) => (
