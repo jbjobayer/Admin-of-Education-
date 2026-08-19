@@ -257,7 +257,7 @@ CREATE TABLE IF NOT EXISTS public.course_materials (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 9. Exams Table (exams)
+-- 9. Exams Table (exams - for Course-linked & standard exams)
 CREATE TABLE IF NOT EXISTS public.exams (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES public.courses(id) ON DELETE SET NULL,
@@ -277,10 +277,30 @@ CREATE TABLE IF NOT EXISTS public.exams (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
+-- 9B. Free Exams Table (free_exams - for Open/Free Model Tests)
+CREATE TABLE IF NOT EXISTS public.free_exams (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  title TEXT NOT NULL,
+  description TEXT,
+  subject TEXT DEFAULT 'সাধারণ ও মাদ্রাসা কারিকুলাম',
+  exam_type TEXT NOT NULL DEFAULT 'model_test' CHECK (exam_type IN ('model_test', 'daily_test', 'chapter_test', 'full_test', 'live_exam')),
+  total_questions INT NOT NULL DEFAULT 0,
+  duration_minutes INT NOT NULL DEFAULT 30,
+  total_marks NUMERIC NOT NULL DEFAULT 10,
+  negative_mark NUMERIC NOT NULL DEFAULT 0.25,
+  pass_mark NUMERIC NOT NULL DEFAULT 4,
+  exam_date TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+  is_free BOOLEAN NOT NULL DEFAULT TRUE,
+  is_published BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
 -- 10. Questions Table (questions)
 CREATE TABLE IF NOT EXISTS public.questions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  exam_id UUID REFERENCES public.exams(id) ON DELETE CASCADE,
+  exam_id UUID,
   subject_id TEXT,
   subject_name TEXT,
   topic TEXT,
@@ -425,6 +445,7 @@ ALTER TABLE public.course_syllabus_modules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.course_syllabus_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.course_materials ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.exams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.free_exams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.questions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.course_enrollments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.exam_results ENABLE ROW LEVEL SECURITY;
@@ -454,6 +475,9 @@ CREATE POLICY "Allow all on course_materials" ON public.course_materials FOR ALL
 DROP POLICY IF EXISTS "Allow all on exams" ON public.exams;
 CREATE POLICY "Allow all on exams" ON public.exams FOR ALL USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Allow all on free_exams" ON public.free_exams;
+CREATE POLICY "Allow all on free_exams" ON public.free_exams FOR ALL USING (true) WITH CHECK (true);
+
 DROP POLICY IF EXISTS "Allow all on questions" ON public.questions;
 CREATE POLICY "Allow all on questions" ON public.questions FOR ALL USING (true) WITH CHECK (true);
 
@@ -473,6 +497,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE
   public.course_syllabus_items, 
   public.course_materials, 
   public.exams, 
+  public.free_exams,
   public.questions, 
   public.course_enrollments, 
   public.exam_results;
@@ -494,6 +519,7 @@ ALTER TABLE IF EXISTS public.course_syllabus_modules DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.course_syllabus_items DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.course_materials DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.exams DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.free_exams DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.questions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.course_enrollments DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.exam_results DISABLE ROW LEVEL SECURITY;

@@ -32,6 +32,7 @@ const AdminDashboardContent: React.FC = () => {
   // Additional CRUD Modals State
   const [isQuestionFormOpen, setIsQuestionFormOpen] = useState(false);
   const [questionToEdit, setQuestionToEdit] = useState<Question | null>(null);
+  const [questionInitialExamId, setQuestionInitialExamId] = useState<string | undefined>(undefined);
 
   const [isBulkParserOpen, setIsBulkParserOpen] = useState(false);
 
@@ -173,8 +174,10 @@ const AdminDashboardContent: React.FC = () => {
         onClose={() => {
           setIsQuestionFormOpen(false);
           setQuestionToEdit(null);
+          setQuestionInitialExamId(undefined);
         }}
         questionToEdit={questionToEdit}
+        initialExamId={questionInitialExamId}
       />
       <BulkPasteParserModal
         isOpen={isBulkParserOpen}
