@@ -304,7 +304,9 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     let examQuestions = Array.isArray(resolvedExam.questions) ? [...resolvedExam.questions] : [];
 
     if (examQuestions.length === 0) {
-      const matchingByExamId = questions.filter((q) => q.exam_id && q.exam_id === exam.id);
+      const matchingByExamId = questions.filter(
+        (q) => (q.exam_id && q.exam_id === exam.id) || (q.free_exam_id && q.free_exam_id === exam.id)
+      );
       if (matchingByExamId.length > 0) {
         examQuestions = matchingByExamId;
       } else {
@@ -841,9 +843,22 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const assignQuestionsToExam = async (examId: string, questionIds: string[]) => {
+    const targetExam = exams.find((e) => e.id === examId);
+    const isFree = Boolean(targetExam?.is_free || targetExam?.exam_scope === "free" || !targetExam?.course_id);
+
     // 1. Optimistically update local questions state
     setQuestions((prev) =>
-      prev.map((q) => (questionIds.includes(q.id) ? { ...q, exam_id: examId } : q))
+      prev.map((q) => {
+        if (questionIds.includes(q.id)) {
+          return {
+            ...q,
+            exam_id: isFree ? null : examId,
+            free_exam_id: isFree ? examId : null,
+            exam_scope: isFree ? ("free" as const) : ("course" as const),
+          };
+        }
+        return q;
+      })
     );
 
     // 2. Optimistically update local exams state with the assigned questions
@@ -868,7 +883,7 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // 3. Push to Supabase
     try {
-      const res = await dbAssignQuestionsToExam(examId, questionIds);
+      const res = await dbAssignQuestionsToExam(examId, questionIds, isFree);
       if (res.error) {
         showToast(`Supabase সিঙ্ক সতর্কতা: ${res.error}`, "info");
       } else {
@@ -882,6 +897,7 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const autoPopulateExamQuestions = async (examId: string, count: number = 10) => {
     const targetExam = exams.find((e) => e.id === examId);
+    const isFree = Boolean(targetExam?.is_free || targetExam?.exam_scope === "free" || !targetExam?.course_id);
     const subjectHint = targetExam?.subject || targetExam?.title || "";
 
     // Local matching
@@ -905,7 +921,7 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // Call Supabase auto-populate as well
     try {
-      await dbAutoPopulateExamQuestions(examId, count, subjectHint);
+      await dbAutoPopulateExamQuestions(examId, count, subjectHint, isFree);
     } catch (e) {
       console.warn("Supabase auto populate notice:", e);
     }

@@ -77,8 +77,10 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
 
     // If exam.questions is empty, dynamically resolve from questions bank
     if (examQuestions.length === 0) {
-      // 1. Try matching by exam_id in global questions
-      const matchingByExamId = questions.filter((q) => q.exam_id && q.exam_id === exam.id);
+      // 1. Try matching by exam_id or free_exam_id in global questions
+      const matchingByExamId = questions.filter(
+        (q) => (q.exam_id && q.exam_id === exam.id) || (q.free_exam_id && q.free_exam_id === exam.id)
+      );
       if (matchingByExamId.length > 0) {
         examQuestions = matchingByExamId;
       } else {
