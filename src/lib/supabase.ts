@@ -277,23 +277,25 @@ CREATE TABLE IF NOT EXISTS public.exams (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 9B. Free Exams Table (free_exams - for Open/Free Model Tests)
+// 9B. Free Exams Table (free_exams - for Open/Free Model Tests)
 CREATE TABLE IF NOT EXISTS public.free_exams (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   title TEXT NOT NULL,
   description TEXT,
+  total_marks INT NOT NULL DEFAULT 50,
+  duration_minutes INT NOT NULL DEFAULT 30,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  -- Additional fields for rich model test & curriculum compatibility:
   subject TEXT DEFAULT 'সাধারণ ও মাদ্রাসা কারিকুলাম',
   exam_type TEXT NOT NULL DEFAULT 'model_test' CHECK (exam_type IN ('model_test', 'daily_test', 'chapter_test', 'full_test', 'live_exam')),
   total_questions INT NOT NULL DEFAULT 0,
-  duration_minutes INT NOT NULL DEFAULT 30,
-  total_marks NUMERIC NOT NULL DEFAULT 10,
   negative_mark NUMERIC NOT NULL DEFAULT 0.25,
-  pass_mark NUMERIC NOT NULL DEFAULT 4,
+  pass_mark NUMERIC NOT NULL DEFAULT 20,
   exam_date TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
   is_free BOOLEAN NOT NULL DEFAULT TRUE,
   is_published BOOLEAN NOT NULL DEFAULT TRUE,
   sort_order INT NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
@@ -541,4 +543,56 @@ DROP POLICY IF EXISTS "Admins have full access on exam_results" ON public.exam_r
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
+`;
+
+// Standalone Migration SQL script for 'free_exams' table
+export const SUPABASE_FREE_EXAMS_MIGRATION_SQL = `-- ==============================================================================
+-- 🚀 TAMREEN SUPABASE MIGRATION: CREATE 'free_exams' TABLE
+-- Paste and run this script in Supabase Dashboard -> SQL Editor -> Run (F5)
+-- ==============================================================================
+
+-- 1. Enable UUID extension if not already enabled
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 2. Create free_exams Table
+CREATE TABLE IF NOT EXISTS public.free_exams (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  title TEXT NOT NULL,
+  description TEXT,
+  total_marks INT NOT NULL DEFAULT 50,
+  duration_minutes INT NOT NULL DEFAULT 30,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  -- Model Test details
+  subject TEXT DEFAULT 'সাধারণ ও মাদ্রাসা কারিকুলাম',
+  exam_type TEXT NOT NULL DEFAULT 'model_test',
+  total_questions INT NOT NULL DEFAULT 0,
+  negative_mark NUMERIC NOT NULL DEFAULT 0.25,
+  pass_mark NUMERIC NOT NULL DEFAULT 20,
+  exam_date TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+  is_free BOOLEAN NOT NULL DEFAULT TRUE,
+  is_published BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- 3. Enable Row Level Security (RLS)
+ALTER TABLE public.free_exams ENABLE ROW LEVEL SECURITY;
+
+-- 4. Create Policies for Public and Authenticated Access
+DROP POLICY IF EXISTS "Allow all on free_exams" ON public.free_exams;
+CREATE POLICY "Allow all on free_exams" ON public.free_exams FOR ALL USING (true) WITH CHECK (true);
+
+-- 5. Grant Permissions to anon, authenticated, and service_role
+GRANT ALL ON TABLE public.free_exams TO anon, authenticated, service_role;
+
+-- 6. Add to Realtime publication if available
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.free_exams;
+  END IF;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 `;

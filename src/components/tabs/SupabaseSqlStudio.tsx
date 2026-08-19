@@ -17,6 +17,7 @@ import { useAdminData } from "../../context/AdminDataContext";
 import {
   SUPABASE_SCHEMA_SQL,
   SUPABASE_FIX_RLS_SQL,
+  SUPABASE_FREE_EXAMS_MIGRATION_SQL,
   checkSupabaseConnection,
   getSavedSupabaseConfig,
   resetSupabaseClient,
@@ -28,6 +29,7 @@ export const SupabaseSqlStudio: React.FC = () => {
 
   const [copied, setCopied] = useState(false);
   const [copiedRls, setCopiedRls] = useState(false);
+  const [copiedFreeExams, setCopiedFreeExams] = useState(false);
   const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(() => getSavedSupabaseConfig());
   const [connectionStatus, setConnectionStatus] = useState<"idle" | "testing" | "connected" | "not_configured">(() => {
     const cfg = getSavedSupabaseConfig();
@@ -75,6 +77,7 @@ export const SupabaseSqlStudio: React.FC = () => {
     { name: "profiles", desc: "শিক্ষার্থীদের প্রোফাইল, মাদ্রাসার নাম ও প্রিমিয়াম মেয়াদ", count: profiles.length + 18450 },
     { name: "questions", desc: "আরবি হরকত, বাংলা/ইংরেজি প্রশ্ন, অপশন ও রেফারেন্স", count: questions.length },
     { name: "exams", desc: "লাইভ পরীক্ষা, সাপ্তাহিক মডেল টেস্ট ও নেগেটিভ মার্কিং", count: exams.length },
+    { name: "free_exams", desc: "উন্মুক্ত ও ফ্রি মডেল টেস্ট, সময়কাল ও মোট নম্বর", count: exams.filter((e) => e.is_free).length },
     { name: "courses", desc: "কোর্স মেটাডাটা, ডাইনামিক বাটন, ভিডিও ও রুটিন", count: courses.length },
     { name: "subjects", desc: "বিষয়ভিত্তিক কনফিগ ও প্রিমিয়াম লক সেটিংস", count: subjects.length },
     { name: "job_circulars", desc: "NTRCA ও মাদ্রাসা শিক্ষা অধিদপ্তরের নিয়োগ বিজ্ঞপ্তি", count: jobCirculars.length },
@@ -95,6 +98,13 @@ export const SupabaseSqlStudio: React.FC = () => {
     setCopiedRls(true);
     showToast("⚡ RLS সিকিউরিটি ফিক্স স্ক্রিপ্ট ক্লিপবোর্ডে কপি হয়েছে! এটি Supabase SQL Editor-এ পেস্ট করে Run করুন।");
     setTimeout(() => setCopiedRls(false), 3000);
+  };
+
+  const handleCopyFreeExamsSql = () => {
+    navigator.clipboard.writeText(SUPABASE_FREE_EXAMS_MIGRATION_SQL);
+    setCopiedFreeExams(true);
+    showToast("🚀 'free_exams' টেবিল মাইগ্রেশন SQL ক্লিপবোর্ডে কপি হয়েছে! এটি Supabase SQL Editor-এ পেস্ট করে Run করুন।");
+    setTimeout(() => setCopiedFreeExams(false), 3000);
   };
 
   const handleDownloadSql = () => {
@@ -313,24 +323,78 @@ export const SupabaseSqlStudio: React.FC = () => {
         </div>
       </div>
 
-      {/* SQL Migration Script Code Viewer */}
-      <div className="bg-slate-950 rounded-3xl p-6 border border-slate-800 shadow-xl space-y-3">
-        <div className="flex items-center justify-between text-xs text-slate-400 pb-2 border-b border-slate-800">
-          <div className="flex items-center gap-2">
-            <Code className="w-4 h-4 text-amber-400" />
-            <span className="font-mono text-slate-200 font-bold">schema.sql (PostgreSQL + RLS Security Policies)</span>
+      {/* Free Exams Table Migration Notice Card */}
+      <div className="bg-gradient-to-r from-emerald-50 via-teal-50/50 to-emerald-50/30 dark:from-emerald-950/40 dark:via-teal-950/20 dark:to-emerald-950/30 rounded-3xl p-5 border border-emerald-200 dark:border-emerald-800/80 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold flex-shrink-0 shadow-md shadow-emerald-600/30">
+            <Database className="w-5 h-5" />
           </div>
-          <button
-            onClick={handleCopySql}
-            className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer"
-          >
-            <Copy className="w-3.5 h-3.5" />
-            <span>কপি স্ক্রিপ্ট</span>
-          </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                'free_exams' টেবিল মাইগ্রেশন স্ক্রিপ্ট (Free Model Tests & Open Exams)
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200">
+                New Table
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 max-w-2xl leading-relaxed">
+              সুপাবেজে উন্মুক্ত ও ফ্রি মডেল টেস্টের জন্য <code>free_exams</code> টেবিল তৈরি করতে নিচের বাটনে ক্লিক করে স্ক্রিপ্টটি কপি করুন এবং Supabase Dashboard-এর <strong>SQL Editor</strong>-এ পেস্ট করে <strong>Run</strong> করুন।
+            </p>
+          </div>
         </div>
 
-        <div className="max-h-96 overflow-y-auto font-mono text-[11px] text-emerald-300/90 leading-relaxed bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80">
-          <pre className="whitespace-pre-wrap">{SUPABASE_SCHEMA_SQL}</pre>
+        <button
+          onClick={handleCopyFreeExamsSql}
+          className="flex-shrink-0 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all cursor-pointer flex items-center gap-2"
+        >
+          {copiedFreeExams ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+          <span>{copiedFreeExams ? "ক্লিপবোর্ডে কপি হয়েছে!" : "free_exams মাইগ্রেশন SQL কপি"}</span>
+        </button>
+      </div>
+
+      {/* SQL Migration Script Code Viewer */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Free Exams Migration Script */}
+        <div className="bg-slate-950 rounded-3xl p-6 border border-slate-800 shadow-xl space-y-3">
+          <div className="flex items-center justify-between text-xs text-slate-400 pb-2 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <Code className="w-4 h-4 text-emerald-400" />
+              <span className="font-mono text-slate-200 font-bold">free_exams_migration.sql</span>
+            </div>
+            <button
+              onClick={handleCopyFreeExamsSql}
+              className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer"
+            >
+              {copiedFreeExams ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedFreeExams ? "কপি হয়েছে" : "কপি SQL"}</span>
+            </button>
+          </div>
+
+          <div className="max-h-72 overflow-y-auto font-mono text-[11px] text-emerald-300/90 leading-relaxed bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80">
+            <pre className="whitespace-pre-wrap">{SUPABASE_FREE_EXAMS_MIGRATION_SQL}</pre>
+          </div>
+        </div>
+
+        {/* Full schema.sql */}
+        <div className="bg-slate-950 rounded-3xl p-6 border border-slate-800 shadow-xl space-y-3">
+          <div className="flex items-center justify-between text-xs text-slate-400 pb-2 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <Code className="w-4 h-4 text-amber-400" />
+              <span className="font-mono text-slate-200 font-bold">schema.sql (All Tables + RLS)</span>
+            </div>
+            <button
+              onClick={handleCopySql}
+              className="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 font-semibold cursor-pointer"
+            >
+              {copied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copied ? "কপি হয়েছে" : "কপি স্কিমা"}</span>
+            </button>
+          </div>
+
+          <div className="max-h-72 overflow-y-auto font-mono text-[11px] text-amber-300/90 leading-relaxed bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80">
+            <pre className="whitespace-pre-wrap">{SUPABASE_SCHEMA_SQL}</pre>
+          </div>
         </div>
       </div>
     </div>
