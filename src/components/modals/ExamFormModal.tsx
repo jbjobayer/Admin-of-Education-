@@ -58,6 +58,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
   } = useAdminData();
 
   // Basic Exam Info
+  const [examTargetType, setExamTargetType] = useState<"course_exam" | "free_exam">("free_exam");
   const [title, setTitle] = useState("");
   const [selectedCourseId, setSelectedCourseId] = useState<string>("");
   const [category, setCategory] = useState<ExamCategory>("daily_live");
@@ -137,8 +138,10 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
   useEffect(() => {
     if (examToEdit) {
       setTitle(examToEdit.title);
+      const hasCourse = Boolean(examToEdit.course_id);
+      setExamTargetType(hasCourse ? "course_exam" : "free_exam");
       setSelectedCourseId(examToEdit.course_id || initialCourseId || "");
-      setCategory(examToEdit.category || "daily_live");
+      setCategory(examToEdit.category || (hasCourse ? "daily_live" : "free_test"));
       setSubject(examToEdit.subject || "নাহু ও সরফ");
       setSyllabus(examToEdit.syllabus || "");
       setDurationMinutes(examToEdit.duration_minutes || 20);
@@ -150,8 +153,8 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       if (examToEdit.questions && examToEdit.questions.length > 0) {
         setExamQuestions(examToEdit.questions);
       } else {
-        // Try to match questions linked by exam_id or subject from question bank
-        const linked = questions.filter((q) => q.exam_id && q.exam_id === examToEdit.id);
+        // Try to match questions linked by exam_id, free_exam_id or subject from question bank
+        const linked = questions.filter((q) => (q.exam_id && q.exam_id === examToEdit.id) || (q.free_exam_id && q.free_exam_id === examToEdit.id));
         if (linked.length > 0) {
           setExamQuestions(linked);
         } else {
@@ -169,8 +172,10 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       setAiSubject(examToEdit.subject || "নাহু ও সরফ");
     } else {
       setTitle("");
+      const isInitialCourse = Boolean(initialCourseId);
+      setExamTargetType(isInitialCourse ? "course_exam" : "free_exam");
       setSelectedCourseId(initialCourseId || "");
-      setCategory("daily_live");
+      setCategory(isInitialCourse ? "daily_live" : "free_test");
       setSubject("নাহু ও সরফ");
       setSyllabus("");
       setDurationMinutes(20);
@@ -612,6 +617,14 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       return;
     }
 
+    const isCourseExam = examTargetType === "course_exam";
+
+    // Strict validation: Course Exam MUST have a valid course_id
+    if (isCourseExam && (!selectedCourseId || selectedCourseId.trim() === "")) {
+      showToast("কোর্স পরীক্ষার জন্য অবশ্যই একটি কোর্স নির্বাচন করতে হবে (course_id NULL থাকা যাবে না)।", "error");
+      return;
+    }
+
     if (examQuestions.length === 0) {
       showToast(
         "দয়া করে পরীক্ষায় অন্তত ১টি প্রশ্ন যুক্ত করুন (ব্যাংক/ম্যানুয়াল/পেস্ট/AI)",
@@ -636,11 +649,14 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
     const calculatedTotalMarks = Number(totalMarks || examQuestions.length || 50);
     const calculatedPassMarks = Math.round(calculatedTotalMarks * 0.4) || 20;
 
+    const finalCourseId = isCourseExam ? selectedCourseId : null;
+    const isFree = !isCourseExam;
+
     const examData = {
-      course_id: selectedCourseId || null,
+      course_id: finalCourseId,
       title: title.trim(),
       description: syllabus.trim() || subject.trim() || title.trim(),
-      category,
+      category: isCourseExam ? category : "free_test",
       exam_type: mappedExamType,
       subject: subject.trim(),
       syllabus: syllabus.trim(),
@@ -654,13 +670,18 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       start_time: startTime,
       end_time: endTime,
       exam_date: startTime,
-      is_free: category === "free_test",
+      is_free: isFree,
       is_published: true,
       sort_order: 0,
       status,
       participant_count: examToEdit ? examToEdit.participant_count : 0,
       result_published: examToEdit ? examToEdit.result_published : false,
-      questions: examQuestions,
+      questions: examQuestions.map((q) => ({
+        ...q,
+        exam_id: isCourseExam ? (examToEdit?.id || q.exam_id) : null,
+        free_exam_id: !isCourseExam ? (examToEdit?.id || q.free_exam_id || q.exam_id) : null,
+      })),
+      table_type: isCourseExam ? "course_exams" : "free_exams",
     };
 
     if (examToEdit) {
@@ -671,7 +692,13 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
 
     // Ensure all questions attached to this exam are also added to the central Question Bank if not already present
     const existingIds = new Set(questions.map((q) => q.id));
-    const newQuestionsForBank = examQuestions.filter((q) => !existingIds.has(q.id));
+    const newQuestionsForBank = examQuestions
+      .filter((q) => !existingIds.has(q.id))
+      .map((q) => ({
+        ...q,
+        exam_id: isCourseExam ? (examToEdit?.id || q.exam_id) : null,
+        free_exam_id: !isCourseExam ? (examToEdit?.id || q.free_exam_id || q.exam_id) : null,
+      }));
     if (newQuestionsForBank.length > 0) {
       addBulkQuestions(newQuestionsForBank);
     }
@@ -729,10 +756,49 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           {/* Section 1: Basic Exam Configurations */}
           <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/80 space-y-3">
-            <h4 className="font-bold text-slate-800 dark:text-white text-xs flex items-center gap-1.5">
-              <Layers className="w-4 h-4 text-emerald-600" />
-              <span>১. পরীক্ষার সাধারণ তথ্য ও শিডিউল</span>
-            </h4>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-700 pb-2.5">
+              <h4 className="font-bold text-slate-800 dark:text-white text-xs flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-emerald-600" />
+                <span>১. পরীক্ষার ধরন, সাধারণ তথ্য ও শিডিউল</span>
+              </h4>
+
+              {/* Target Table Mode Selector */}
+              <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExamTargetType("free_exam");
+                    setSelectedCourseId("");
+                    setCategory("free_test");
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    examTargetType === "free_exam"
+                      ? "bg-amber-600 text-white shadow-xs"
+                      : "text-slate-600 dark:text-slate-300 hover:text-amber-600"
+                  }`}
+                >
+                  <span>🎁 ফ্রি পরীক্ষা / মডেল টেস্ট (free_exams)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExamTargetType("course_exam");
+                    if (!selectedCourseId && courses.length > 0) {
+                      setSelectedCourseId(courses[0].id);
+                    }
+                    setCategory("daily_live");
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    examTargetType === "course_exam"
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "text-slate-600 dark:text-slate-300 hover:text-emerald-600"
+                  }`}
+                >
+                  <span>🎓 কোর্স পরীক্ষা (course_exams)</span>
+                </button>
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <div className="sm:col-span-2 lg:col-span-3">
@@ -749,26 +815,42 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1 flex items-center justify-between">
-                  <span>সংযুক্ত কোর্স / ব্যাচ (Course)</span>
-                  {selectedCourseId && (
-                    <span className="text-[10px] text-emerald-600 font-bold">কোর্সের সাথে লিঙ্ক করা</span>
+              {examTargetType === "course_exam" ? (
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1 flex items-center justify-between">
+                    <span>সংযুক্ত কোর্স / ব্যাচ (Course) * (বাধ্যতামূলক)</span>
+                    <span className="text-[10px] text-emerald-600 font-bold">course_exams টেবিল</span>
+                  </label>
+                  <select
+                    value={selectedCourseId}
+                    onChange={(e) => setSelectedCourseId(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-xl border border-emerald-400 dark:border-emerald-600 bg-emerald-50/60 dark:bg-slate-800 text-slate-900 dark:text-white font-bold cursor-pointer focus:ring-2 focus:ring-emerald-500 outline-none"
+                  >
+                    <option value="">-- কোর্স নির্বাচন করুন (বাধ্যতামূলক) --</option>
+                    {courses.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        📚 {c.title} {c.course_tag ? `(${c.course_tag})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {!selectedCourseId && (
+                    <p className="text-[10px] text-rose-500 font-medium mt-1">
+                      ⚠️ কোর্স পরীক্ষার জন্য course_id ফাঁকা রাখা যাবে না।
+                    </p>
                   )}
-                </label>
-                <select
-                  value={selectedCourseId}
-                  onChange={(e) => setSelectedCourseId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-slate-800 text-slate-900 dark:text-white font-bold cursor-pointer"
-                >
-                  <option value="">(কোনো কোর্সে নয় — সাধারণ পরীক্ষা)</option>
-                  {courses.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      📚 {c.title} {c.course_tag ? `(${c.course_tag})` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1 flex items-center justify-between">
+                    <span>পরীক্ষার পরিধি ও ধরন</span>
+                    <span className="text-[10px] text-amber-600 font-bold">free_exams টেবিল</span>
+                  </label>
+                  <div className="w-full px-3 py-2 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-slate-800 text-amber-900 dark:text-amber-200 font-medium text-[11px] flex items-center gap-1.5">
+                    <span>✨ উন্মুক্ত ও ফ্রি মডেল টেস্ট (কোর্সের আওতাভুক্ত নয়)</span>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
@@ -779,13 +861,21 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
                   onChange={(e) => setCategory(e.target.value as ExamCategory)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium cursor-pointer"
                 >
-                  <option value="daily_live">দৈনিক লাইভ পরীক্ষা (Daily Live)</option>
-                  <option value="weekly_model_test">
-                    সাপ্তাহিক মেগা টেস্ট (Weekly)
-                  </option>
-                  <option value="monthly_mega">মাসিক মেগা মডেল টেস্ট</option>
-                  <option value="free_test">ফ্রি ট্রায়াল টেস্ট</option>
-                  <option value="premium_ntrca">প্রিমিয়াম NTRCA স্পেশাল</option>
+                  {examTargetType === "course_exam" ? (
+                    <>
+                      <option value="daily_live">দৈনিক লাইভ পরীক্ষা (Daily Live)</option>
+                      <option value="weekly_model_test">সাপ্তাহিক মেগা টেস্ট (Weekly)</option>
+                      <option value="monthly_mega">মাসিক মেগা মডেল টেস্ট</option>
+                      <option value="premium_ntrca">প্রিমিয়াম NTRCA স্পেশাল</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="free_test">ফ্রি ট্রায়াল টেস্ট (Free Test)</option>
+                      <option value="weekly_model_test">উন্মুক্ত সাপ্তাহিক মডেল টেস্ট</option>
+                      <option value="daily_live">উন্মুক্ত ডেইলি টেস্ট</option>
+                      <option value="monthly_mega">উন্মুক্ত মেগা মডেল টেস্ট</option>
+                    </>
+                  )}
                 </select>
               </div>
 

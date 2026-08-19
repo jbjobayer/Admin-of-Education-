@@ -67,7 +67,7 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
   const emptyExamsCount = safeExams.filter((e) => {
     const attached = (e.questions && e.questions.length > 0)
       ? e.questions
-      : questions.filter((q) => q.exam_id === e.id);
+      : questions.filter((q) => q.exam_id === e.id || q.free_exam_id === e.id);
     return attached.length === 0;
   }).length;
 
@@ -120,7 +120,7 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
   const handleOpenLinkModal = (exam: Exam) => {
     setLinkingExam(exam);
     // Pre-select questions already linked to this exam
-    const alreadyLinked = questions.filter((q) => q.exam_id === exam.id).map((q) => q.id);
+    const alreadyLinked = questions.filter((q) => q.exam_id === exam.id || q.free_exam_id === exam.id).map((q) => q.id);
     if (alreadyLinked.length > 0) {
       setSelectedQuestionIds(alreadyLinked);
     } else {
@@ -262,7 +262,7 @@ export const ExamModelTestManager: React.FC<ExamModelTestManagerProps> = ({
           // Calculate attached questions
           const attachedQuestions = (exam.questions && exam.questions.length > 0)
             ? exam.questions
-            : questions.filter((q) => q.exam_id === exam.id);
+            : questions.filter((q) => q.exam_id === exam.id || q.free_exam_id === exam.id);
           const qCount = attachedQuestions.length;
 
           // Find linked course

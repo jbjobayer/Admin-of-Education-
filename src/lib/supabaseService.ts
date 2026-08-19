@@ -8,6 +8,8 @@ import {
   CourseSyllabusItem,
   CourseMaterial,
   Exam,
+  CourseExam,
+  FreeExam,
   Question,
   CourseEnrollment,
   ExamResult,
@@ -132,18 +134,20 @@ export async function dbFetchCourses(): Promise<ServiceResult<Course[]>> {
       return { data: null, error: error.message };
     }
 
-    // Also fetch exams and questions to resolve linked stats for course cards
+    // Also fetch course_exams and questions to resolve linked stats for course cards
     let allExams: any[] = [];
     let allQuestions: any[] = [];
     try {
-      const [examsRes, questionsRes] = await Promise.all([
-        supabase.from("exams").select("id, course_id, title, description, exam_type, total_questions, duration_minutes, total_marks, subject, syllabus, is_published, status"),
-        supabase.from("questions").select("id, exam_id, question_text, question, topic, subject_name, subject_id, options, option_a, option_b, option_c, option_d, correct_option, explanation"),
-      ]);
+      // First try course_exams, fallback to exams if table rename pending
+      let examsRes = await supabase.from("course_exams").select("id, course_id, title, description, exam_type, total_questions, duration_minutes, total_marks, subject, syllabus, is_published, status");
+      if (examsRes.error && examsRes.error.code === "42P01") {
+        examsRes = await supabase.from("exams").select("id, course_id, title, description, exam_type, total_questions, duration_minutes, total_marks, subject, syllabus, is_published, status");
+      }
+      const questionsRes = await supabase.from("questions").select("id, exam_id, free_exam_id, question_text, question, topic, subject_name, subject_id, options, option_a, option_b, option_c, option_d, correct_option, explanation");
       if (examsRes.data) allExams = examsRes.data;
       if (questionsRes.data) allQuestions = questionsRes.data;
     } catch (fetchErr) {
-      console.warn("Notice fetching exams/questions for courses:", fetchErr);
+      console.warn("Notice fetching course_exams/questions for courses:", fetchErr);
     }
 
     const formatted: Course[] = ((data as any[]) || []).map((row) => {
@@ -609,455 +613,408 @@ export async function dbDeleteCourseMaterial(id: string): Promise<ServiceResult<
 }
 
 // -------------------------------------------------------------
-// 7. EXAMS CRUD
+// 7. COURSE EXAMS CRUD (`course_exams` table)
+// -------------------------------------------------------------
+export async function dbFetchCourseExams(courseId?: string): Promise<ServiceResult<CourseExam[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    let query = supabase
+      .from("course_exams")
+      .select("*")
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: false });
+
+    if (courseId && isValidUuid(courseId)) {
+      query = query.eq("course_id", courseId);
+    }
+
+    let { data, error } = await query;
+
+    // Fallback if migration rename is pending
+    if (error && (error.code === "42P01" || error.message.includes("does not exist"))) {
+      console.warn("course_exams table not found, falling back to exams table with course_id filter");
+      let fbQuery = supabase.from("exams").select("*").not("course_id", "is", null);
+      if (courseId && isValidUuid(courseId)) {
+        fbQuery = fbQuery.eq("course_id", courseId);
+      }
+      const fbRes = await fbQuery;
+      data = fbRes.data;
+      error = fbRes.error;
+    }
+
+    if (error) {
+      console.error("❌ Supabase SELECT 'course_exams' Error:", error);
+      return { data: null, error: error.message };
+    }
+
+    const formatted: CourseExam[] = ((data as any[]) || []).map((row) => ({
+      id: row.id,
+      course_id: row.course_id,
+      title: row.title || "কোর্স পরীক্ষা",
+      description: row.description || "",
+      exam_type: row.exam_type || "model_test",
+      total_questions: Number(row.total_questions || 0),
+      duration_minutes: Number(row.duration_minutes || 30),
+      total_marks: Number(row.total_marks || 50),
+      negative_mark: Number(row.negative_mark ?? row.negative_marking ?? 0.25),
+      pass_mark: Number(row.pass_mark ?? row.pass_marks ?? 20),
+      exam_date: row.exam_date || row.start_time || new Date().toISOString(),
+      is_free: false,
+      is_published: row.is_published !== undefined ? Boolean(row.is_published) : true,
+      sort_order: Number(row.sort_order || 0),
+      created_at: row.created_at || new Date().toISOString(),
+      updated_at: row.updated_at,
+      subject: row.subject || "কোর্স বিষয়",
+      syllabus: row.syllabus || row.description || "",
+      status: row.status || (row.is_published ? "live" : "upcoming"),
+      category: row.category || "model_test",
+      participant_count: Number(row.participant_count || 0),
+      exam_scope: "course",
+    }));
+
+    return { data: formatted, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "কোর্স পরীক্ষা লোড করা সম্ভব হয়নি।" };
+  }
+}
+
+export async function dbCreateCourseExam(
+  exam: Partial<CourseExam>
+): Promise<ServiceResult<CourseExam>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  // Strict Validation: course_id is MANDATORY and cannot be null
+  if (!exam.course_id || !isValidUuid(exam.course_id)) {
+    const errMsg = "প্রতিটি Course Exam-এর অবশ্যই একটি valid course_id থাকবে। course_id ছাড়া Course Exam তৈরি করা যাবে না।";
+    console.error("❌ dbCreateCourseExam Error:", errMsg, { course_id: exam.course_id });
+    return {
+      data: null,
+      error: errMsg,
+      errorObj: { message: errMsg, code: "MISSING_COURSE_ID" },
+    };
+  }
+
+  try {
+    let examType = exam.exam_type || "model_test";
+    if (exam.category === "daily_live" || examType === "daily_live") examType = "live_exam";
+    else if (exam.category === "premium_ntrca" || examType === "premium_ntrca") examType = "full_test";
+
+    const payload = {
+      course_id: exam.course_id,
+      title: (exam.title || "নতুন কোর্স পরীক্ষা").trim(),
+      description: (exam.description || exam.syllabus || exam.subject || "").trim(),
+      exam_type: examType,
+      total_questions: Number(exam.total_questions || (exam.questions ? exam.questions.length : 0)),
+      duration_minutes: Number(exam.duration_minutes || 30),
+      total_marks: Number(exam.total_marks || (exam.questions ? exam.questions.length : 50)),
+      negative_mark: Number(exam.negative_mark ?? 0.25),
+      pass_mark: Number(exam.pass_mark ?? 20),
+      exam_date: exam.exam_date || new Date().toISOString(),
+      is_free: false,
+      is_published: exam.is_published !== undefined ? Boolean(exam.is_published) : true,
+      sort_order: Number(exam.sort_order || 0),
+    };
+
+    console.log("🚀 Executing Supabase INSERT into 'course_exams':", payload);
+
+    let { data, error } = await supabase.from("course_exams").insert(payload).select().single();
+
+    // Fallback if table name is still 'exams'
+    if (error && (error.code === "42P01" || error.message.includes("does not exist"))) {
+      console.warn("course_exams not found, inserting into exams table...");
+      const fbRes = await supabase.from("exams").insert(payload).select().single();
+      data = fbRes.data;
+      error = fbRes.error;
+    }
+
+    if (error) {
+      console.error("❌ Supabase INSERT 'course_exams' Error:", error);
+      return { data: null, error: error.message, errorObj: error };
+    }
+
+    // Insert questions if provided
+    if (exam.questions && Array.isArray(exam.questions) && exam.questions.length > 0 && data?.id) {
+      const qPayloads = exam.questions.map((q, idx) => ({
+        exam_id: data.id,
+        free_exam_id: null,
+        question_number: q.question_number || idx + 1,
+        question_text: (q.question_text || q.question || "").trim(),
+        option_a: q.option_a || (q.options ? q.options[0] : "") || "ক",
+        option_b: q.option_b || (q.options ? q.options[1] : "") || "খ",
+        option_c: q.option_c || (q.options ? q.options[2] : "") || "গ",
+        option_d: q.option_d || (q.options ? q.options[3] : "") || "ঘ",
+        correct_option: q.correct_option || "option_a",
+        explanation: q.explanation || "",
+        marks: Number(q.marks || 1),
+        negative_marks: Number(q.negative_marks || payload.negative_mark || 0.25),
+        sort_order: idx,
+      }));
+      await supabase.from("questions").insert(qPayloads);
+    }
+
+    const created: CourseExam = {
+      ...exam,
+      ...data,
+      course_id: exam.course_id,
+      questions: exam.questions || [],
+      exam_scope: "course",
+    };
+
+    return { data: created, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "কোর্স পরীক্ষা তৈরি করা যায়নি।" };
+  }
+}
+
+export async function dbUpdateCourseExam(
+  id: string,
+  exam: Partial<CourseExam>
+): Promise<ServiceResult<CourseExam>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+  if (!isValidUuid(id)) return { data: null, error: "অবৈধ Exam UUID" };
+
+  try {
+    const payload: any = {};
+    if (exam.course_id !== undefined) {
+      if (!isValidUuid(exam.course_id)) {
+        return { data: null, error: "Course Exam-এ অবশ্যই একটি valid course_id থাকতে হবে।" };
+      }
+      payload.course_id = exam.course_id;
+    }
+    if (exam.title !== undefined) payload.title = exam.title.trim();
+    if (exam.description !== undefined) payload.description = exam.description.trim();
+    if (exam.exam_type !== undefined) payload.exam_type = exam.exam_type;
+    if (exam.total_questions !== undefined) payload.total_questions = Number(exam.total_questions);
+    if (exam.duration_minutes !== undefined) payload.duration_minutes = Number(exam.duration_minutes);
+    if (exam.total_marks !== undefined) payload.total_marks = Number(exam.total_marks);
+    if (exam.negative_mark !== undefined) payload.negative_mark = Number(exam.negative_mark);
+    if (exam.pass_mark !== undefined) payload.pass_mark = Number(exam.pass_mark);
+    if (exam.exam_date !== undefined) payload.exam_date = exam.exam_date;
+    if (exam.is_published !== undefined) payload.is_published = Boolean(exam.is_published);
+    if (exam.sort_order !== undefined) payload.sort_order = Number(exam.sort_order);
+
+    let { data, error } = await supabase
+      .from("course_exams")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error && (error.code === "42P01" || error.message.includes("does not exist"))) {
+      const fbRes = await supabase.from("exams").update(payload).eq("id", id).select().single();
+      data = fbRes.data;
+      error = fbRes.error;
+    }
+
+    if (error) return { data: null, error: error.message, errorObj: error };
+    return { data: { ...data, exam_scope: "course" } as CourseExam, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "কোর্স পরীক্ষা আপডেট করা যায়নি।" };
+  }
+}
+
+export async function dbDeleteCourseExam(id: string): Promise<ServiceResult<boolean>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+  if (!isValidUuid(id)) return { data: true, error: null };
+
+  try {
+    let { error } = await supabase.from("course_exams").delete().eq("id", id);
+    if (error && (error.code === "42P01" || error.message.includes("does not exist"))) {
+      const fb = await supabase.from("exams").delete().eq("id", id);
+      error = fb.error;
+    }
+    if (error) return { data: false, error: error.message };
+    return { data: true, error: null };
+  } catch (err: any) {
+    return { data: false, error: err?.message || "কোর্স পরীক্ষা মুছে ফেলা যায়নি।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 7.1 FREE EXAMS CRUD (`free_exams` table)
+// -------------------------------------------------------------
+export async function dbFetchFreeExams(): Promise<ServiceResult<FreeExam[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const { data, error } = await supabase
+      .from("free_exams")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.warn("free_exams query notice:", error.message);
+      return { data: [], error: null };
+    }
+
+    const formatted: FreeExam[] = ((data as any[]) || []).map((row) => ({
+      id: row.id,
+      title: row.title || "ফ্রি মডেল টেস্ট",
+      description: row.description || "",
+      total_marks: Number(row.total_marks || 50),
+      duration_minutes: Number(row.duration_minutes || 30),
+      created_at: row.created_at || new Date().toISOString(),
+      is_active: row.is_active !== undefined ? Boolean(row.is_active) : true,
+      subject: row.subject || "সাধারণ বিষয়",
+      exam_type: row.exam_type || "model_test",
+      total_questions: Number(row.total_questions || 0),
+      negative_mark: Number(row.negative_mark || 0.25),
+      pass_mark: Number(row.pass_mark || 20),
+      exam_date: row.exam_date || row.created_at,
+      is_free: true,
+      is_published: row.is_published !== undefined ? Boolean(row.is_published) : true,
+      sort_order: Number(row.sort_order || 0),
+      updated_at: row.updated_at,
+      syllabus: row.syllabus || row.description || "",
+      status: row.is_active ? "live" : "upcoming",
+      category: "free_test",
+      participant_count: Number(row.participant_count || 0),
+      exam_scope: "free",
+    }));
+
+    return { data: formatted, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "ফ্রি পরীক্ষা লোড করা যায়নি।" };
+  }
+}
+
+export async function dbCreateFreeExam(
+  exam: Partial<FreeExam>
+): Promise<ServiceResult<FreeExam>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    const payload = {
+      title: (exam.title || "নতুন ফ্রি পরীক্ষা").trim(),
+      description: (exam.description || exam.syllabus || exam.subject || "").trim(),
+      total_marks: Number(exam.total_marks || (exam.questions ? exam.questions.length : 50)),
+      duration_minutes: Number(exam.duration_minutes || 30),
+      is_active: exam.is_active !== undefined ? Boolean(exam.is_active) : true,
+      is_published: exam.is_published !== undefined ? Boolean(exam.is_published) : true,
+      exam_type: exam.exam_type || "model_test",
+      total_questions: Number(exam.total_questions || (exam.questions ? exam.questions.length : 0)),
+      negative_mark: Number(exam.negative_mark ?? 0.25),
+      pass_mark: Number(exam.pass_mark ?? 20),
+      exam_date: exam.exam_date || new Date().toISOString(),
+      sort_order: Number(exam.sort_order || 0),
+    };
+
+    console.log("🚀 Executing Supabase INSERT into 'free_exams':", payload);
+
+    const { data, error } = await supabase.from("free_exams").insert(payload).select().single();
+
+    if (error) {
+      console.error("❌ Supabase INSERT 'free_exams' Error:", error);
+      return { data: null, error: error.message, errorObj: error };
+    }
+
+    // Attach questions if provided
+    if (exam.questions && Array.isArray(exam.questions) && exam.questions.length > 0 && data?.id) {
+      const qPayloads = exam.questions.map((q, idx) => ({
+        free_exam_id: data.id,
+        exam_id: null,
+        question_number: q.question_number || idx + 1,
+        question_text: (q.question_text || q.question || "").trim(),
+        option_a: q.option_a || (q.options ? q.options[0] : "") || "ক",
+        option_b: q.option_b || (q.options ? q.options[1] : "") || "খ",
+        option_c: q.option_c || (q.options ? q.options[2] : "") || "গ",
+        option_d: q.option_d || (q.options ? q.options[3] : "") || "ঘ",
+        correct_option: q.correct_option || "option_a",
+        explanation: q.explanation || "",
+        marks: Number(q.marks || 1),
+        negative_marks: Number(q.negative_marks || payload.negative_mark || 0.25),
+        sort_order: idx,
+      }));
+      await supabase.from("questions").insert(qPayloads);
+    }
+
+    const created: FreeExam = {
+      ...exam,
+      ...data,
+      is_active: data.is_active ?? true,
+      questions: exam.questions || [],
+      exam_scope: "free",
+    };
+
+    return { data: created, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "ফ্রি পরীক্ষা তৈরি করা যায়নি।" };
+  }
+}
+
+export async function dbUpdateFreeExam(
+  id: string,
+  exam: Partial<FreeExam>
+): Promise<ServiceResult<FreeExam>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+  if (!isValidUuid(id)) return { data: null, error: "অবৈধ Exam UUID" };
+
+  try {
+    const payload: any = {};
+    if (exam.title !== undefined) payload.title = exam.title.trim();
+    if (exam.description !== undefined) payload.description = exam.description.trim();
+    if (exam.total_marks !== undefined) payload.total_marks = Number(exam.total_marks);
+    if (exam.duration_minutes !== undefined) payload.duration_minutes = Number(exam.duration_minutes);
+    if (exam.is_active !== undefined) payload.is_active = Boolean(exam.is_active);
+    if (exam.is_published !== undefined) payload.is_published = Boolean(exam.is_published);
+    if (exam.total_questions !== undefined) payload.total_questions = Number(exam.total_questions);
+    if (exam.negative_mark !== undefined) payload.negative_mark = Number(exam.negative_mark);
+    if (exam.pass_mark !== undefined) payload.pass_mark = Number(exam.pass_mark);
+    if (exam.exam_date !== undefined) payload.exam_date = exam.exam_date;
+    if (exam.sort_order !== undefined) payload.sort_order = Number(exam.sort_order);
+
+    const { data, error } = await supabase
+      .from("free_exams")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: error.message, errorObj: error };
+    return { data: { ...data, exam_scope: "free" } as FreeExam, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "ফ্রি পরীক্ষা আপডেট করা যায়নি।" };
+  }
+}
+
+export async function dbDeleteFreeExam(id: string): Promise<ServiceResult<boolean>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+  if (!isValidUuid(id)) return { data: true, error: null };
+
+  try {
+    const { error } = await supabase.from("free_exams").delete().eq("id", id);
+    if (error) return { data: false, error: error.message };
+    return { data: true, error: null };
+  } catch (err: any) {
+    return { data: false, error: err?.message || "ফ্রি পরীক্ষা মুছে ফেলা যায়নি।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 7.2 UNIFIED EXAMS CRUD (Fetches & Routes both Course & Free Exams)
 // -------------------------------------------------------------
 export async function dbFetchExams(): Promise<ServiceResult<Exam[]>> {
   const supabase = getSupabaseClient();
   if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
 
   try {
-    const { data, error } = await supabase
-      .from("exams")
-      .select("*")
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: false });
+    // 1. Fetch from course_exams and free_exams concurrently
+    const [courseExamsRes, freeExamsRes, questionsRes] = await Promise.all([
+      dbFetchCourseExams(),
+      dbFetchFreeExams(),
+      supabase.from("questions").select("*").order("sort_order", { ascending: true }),
+    ]);
 
-    if (error) {
-      console.error("❌ Supabase SELECT 'exams' Error:", {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-      });
-      return {
-        data: null,
-        error: error.message,
-        errorObj: {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        },
-      };
-    }
-
-    // Also fetch all questions from Supabase questions table to link with exams
-    let allQuestionsMap: Record<string, Question[]> = {};
-    let allQuestionsList: Question[] = [];
-    try {
-      const { data: qData, error: qError } = await supabase
-        .from("questions")
-        .select("*")
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: false });
-
-      if (!qError && qData) {
-        allQuestionsList = (qData as any[]).map((row) => {
-          const optionsArr = [
-            row.option_a || "",
-            row.option_b || "",
-            row.option_c || "",
-            row.option_d || "",
-          ];
-          let correctIdx = 0;
-          if (row.correct_option === "option_b" || row.correct_option === "b" || row.correct_option === "১") correctIdx = 1;
-          else if (row.correct_option === "option_c" || row.correct_option === "c" || row.correct_option === "২") correctIdx = 2;
-          else if (row.correct_option === "option_d" || row.correct_option === "d" || row.correct_option === "৩") correctIdx = 3;
-
-          return {
-            id: row.id,
-            exam_id: row.exam_id || undefined,
-            question_number: row.question_number || 1,
-            question_text: row.question_text || row.question || "",
-            arabic_text: row.arabic_text || undefined,
-            option_a: row.option_a || optionsArr[0] || "",
-            option_b: row.option_b || optionsArr[1] || "",
-            option_c: row.option_c || optionsArr[2] || "",
-            option_d: row.option_d || optionsArr[3] || "",
-            correct_option: row.correct_option || "option_a",
-            explanation: row.explanation || "",
-            source: row.source || "",
-            marks: Number(row.marks || 1),
-            negative_marks: Number(row.negative_marks || 0.25),
-            image_url: row.image_url || "",
-            sort_order: row.sort_order || 0,
-            created_at: row.created_at || new Date().toISOString(),
-            question: row.question_text || row.question || "",
-            options: optionsArr,
-            correct_index: correctIdx,
-            topic: row.topic || "সাধারণ",
-            subject_id: row.subject_id || "sub-1",
-            subject_name: row.subject_name || "মাদ্রাসা কারিকুলাম",
-            difficulty: row.difficulty || "Medium",
-            exam_type: row.exam_type || "NTRCA",
-            language: row.language || "bn",
-          };
-        });
-
-        for (const q of allQuestionsList) {
-          if (q.exam_id) {
-            if (!allQuestionsMap[q.exam_id]) {
-              allQuestionsMap[q.exam_id] = [];
-            }
-            allQuestionsMap[q.exam_id].push(q);
-          }
-        }
-      }
-    } catch (errQ) {
-      console.warn("Could not batch load questions for exams:", errQ);
-    }
-
-    const formatted: Exam[] = ((data as any[]) || []).map((row) => {
-      // 1. Check if direct row has questions
-      let examQuestions: Question[] = Array.isArray(row.questions) && row.questions.length > 0 ? row.questions : [];
-      
-      // 2. If not, get questions attached by exam_id in questions table
-      if (examQuestions.length === 0 && row.id && allQuestionsMap[row.id]) {
-        examQuestions = allQuestionsMap[row.id];
-      }
-
-      // 3. If still empty, match questions by subject if available in allQuestionsList
-      if (examQuestions.length === 0 && allQuestionsList.length > 0) {
-        const subMatch = allQuestionsList.filter(
-          (q) =>
-            (row.subject && q.subject_name && q.subject_name.toLowerCase().includes(row.subject.toLowerCase())) ||
-            (row.subject && q.subject_id && row.subject.includes(q.subject_id))
-        );
-        if (subMatch.length > 0) {
-          examQuestions = subMatch.slice(0, row.total_questions || 10);
-        }
-      }
-
-      return {
-        id: row.id,
-        course_id: row.course_id || undefined,
-        title: row.title || "মডেল টেস্ট",
-        description: row.description || "",
-        exam_type: row.exam_type || "model_test",
-        total_questions: Number(examQuestions.length || row.total_questions || 0),
-        duration_minutes: Number(row.duration_minutes || 30),
-        total_marks: Number(row.total_marks || (examQuestions.length > 0 ? examQuestions.length : 50)),
-        negative_mark: Number(row.negative_mark ?? row.negative_marking ?? 0.25),
-        pass_mark: Number(row.pass_mark ?? row.pass_marks ?? 20),
-        exam_date: row.exam_date || row.start_time || new Date().toISOString(),
-        is_free: Boolean(row.is_free),
-        is_published: row.is_published !== undefined ? Boolean(row.is_published) : true,
-        sort_order: Number(row.sort_order || 0),
-        created_at: row.created_at || new Date().toISOString(),
-        updated_at: row.updated_at,
-        // UI compatibility fields:
-        category: row.category || (row.exam_type === "live_exam" ? "daily_live" : row.exam_type === "full_test" ? "premium_ntrca" : "weekly_model_test"),
-        subject: row.subject || "সাধারণ ও মাদ্রাসা কারিকুলাম",
-        syllabus: row.syllabus || row.description || "সম্পূর্ণ সিলেবাস ভিত্তিক মডেল টেস্ট",
-        pass_marks: Number(row.pass_marks ?? row.pass_mark ?? 20),
-        negative_marking: Number(row.negative_marking ?? row.negative_mark ?? 0.25),
-        start_time: row.start_time || row.exam_date || new Date().toISOString(),
-        end_time: row.end_time || new Date(Date.now() + 86400000).toISOString(),
-        result_published: Boolean(row.result_published),
-        status: row.status || (row.is_published ? "live" : "upcoming"),
-        questions: examQuestions,
-        participant_count: Number(row.participant_count || 0),
-        banner_image: row.banner_image || "",
-        is_featured: Boolean(row.is_featured),
-      };
-    });
-
-    return { data: formatted, error: null };
-  } catch (err: any) {
-    return { data: null, error: err?.message || "পরীক্ষা তালিকা লোড করতে সমস্যা হয়েছে।" };
-  }
-}
-
-export async function dbCreateExam(
-  exam: Omit<Exam, "id" | "created_at" | "updated_at">
-): Promise<ServiceResult<Exam>> {
-  const supabase = getSupabaseClient();
-  if (!supabase) {
-    console.warn("⚠️ Supabase Client is not connected. (Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).");
-    return {
-      data: null,
-      error: "Supabase ক্লায়েন্ট সংযুক্ত নয়। দয়া করে Supabase Studio ট্যাবে URL ও Anon Key দিন।",
-      errorObj: {
-        message: "Supabase client not initialized (missing URL or Anon Key).",
-        code: "CLIENT_NOT_INITIALIZED",
-      },
-    };
-  }
-
-  try {
-    // Map category / exam_type safely to Postgres allowed enum values:
-    // 'model_test', 'daily_test', 'chapter_test', 'full_test', 'live_exam'
-    let examType = exam.exam_type || "model_test";
-    if (exam.category === "daily_live" || examType === "daily_live") examType = "live_exam";
-    else if (exam.category === "premium_ntrca" || examType === "premium_ntrca") examType = "full_test";
-    else if (exam.category === "free_test") examType = "model_test";
-    else if (!["model_test", "daily_test", "chapter_test", "full_test", "live_exam"].includes(examType)) {
-      examType = "model_test";
-    }
-
-    const payload = {
-      course_id: isValidUuid(exam.course_id) ? exam.course_id : null,
-      title: (exam.title || "নতুন মডেল টেস্ট").trim(),
-      description: (exam.description || exam.syllabus || exam.subject || "").trim(),
-      exam_type: examType,
-      total_questions: Number(exam.total_questions || (exam.questions ? exam.questions.length : 0)),
-      duration_minutes: Number(exam.duration_minutes || 30),
-      total_marks: Number(exam.total_marks || (exam.questions ? exam.questions.length : 50)),
-      negative_mark: Number(exam.negative_mark ?? exam.negative_marking ?? 0.25),
-      pass_mark: Number(exam.pass_mark ?? exam.pass_marks ?? 20),
-      exam_date: exam.exam_date || exam.start_time || new Date().toISOString(),
-      is_free: Boolean(exam.is_free || exam.category === "free_test"),
-      is_published: exam.is_published !== undefined ? Boolean(exam.is_published) : true,
-      sort_order: Number(exam.sort_order || 0),
-    };
-
-    console.log("🚀 Executing Supabase INSERT into 'exams':", payload);
-
-    const { data, error } = await supabase.from("exams").insert(payload).select().single();
-
-    if (error) {
-      console.error("❌ Supabase INSERT 'exams' Error:", {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-        payload,
-      });
-      return {
-        data: null,
-        error: error.message,
-        errorObj: {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        },
-      };
-    }
-
-    console.log("✅ Supabase Exam row created successfully in 'exams' table:", data);
-
-    // If there are questions attached to this exam, insert them into 'questions' table
-    if (exam.questions && Array.isArray(exam.questions) && exam.questions.length > 0 && data?.id) {
-      try {
-        const questionPayloads = exam.questions.map((q, idx) => {
-          const optA = q.option_a || (q.options ? q.options[0] : "") || "ক";
-          const optB = q.option_b || (q.options ? q.options[1] : "") || "খ";
-          const optC = q.option_c || (q.options ? q.options[2] : "") || "গ";
-          const optD = q.option_d || (q.options ? q.options[3] : "") || "ঘ";
-
-          let correctOpt = q.correct_option || "option_a";
-          if (q.correct_index !== undefined) {
-            const mapIdx: Record<number, string> = { 0: "option_a", 1: "option_b", 2: "option_c", 3: "option_d" };
-            correctOpt = mapIdx[q.correct_index] || "option_a";
-          }
-
-          return {
-            exam_id: data.id,
-            question_number: q.question_number || idx + 1,
-            question_text: (q.question_text || q.question || "").trim(),
-            option_a: optA,
-            option_b: optB,
-            option_c: optC,
-            option_d: optD,
-            correct_option: correctOpt,
-            explanation: q.explanation || "",
-            marks: Number(q.marks || 1),
-            negative_marks: Number(q.negative_marks || payload.negative_mark || 0.25),
-            image_url: q.image_url || null,
-            sort_order: idx,
-          };
-        });
-
-        console.log(`🚀 Executing Supabase Bulk INSERT into 'questions' for exam ${data.id}:`, questionPayloads.length);
-        const { error: qError } = await supabase.from("questions").insert(questionPayloads);
-        if (qError) {
-          console.error("❌ Supabase INSERT 'questions' for exam failed:", {
-            message: qError.message,
-            details: qError.details,
-            hint: qError.hint,
-            code: qError.code,
-          });
-        } else {
-          console.log(`✅ Supabase ${questionPayloads.length} questions attached to exam ${data.id} successfully.`);
-        }
-      } catch (qErr) {
-        console.error("Exception inserting exam questions:", qErr);
-      }
-    }
-
-    const createdExam: Exam = {
-      ...exam,
-      ...data,
-      questions: exam.questions || [],
-    };
-
-    return { data: createdExam, error: null };
-  } catch (err: any) {
-    console.error("❌ Unexpected Exception in dbCreateExam:", err);
-    return {
-      data: null,
-      error: err?.message || "পরীক্ষা তৈরি করা সম্ভব হয়নি।",
-      errorObj: {
-        message: err?.message || "Unexpected exception",
-        code: "UNEXPECTED_ERROR",
-      },
-    };
-  }
-}
-
-export async function dbUpdateExam(id: string, exam: Partial<Exam>): Promise<ServiceResult<Exam>> {
-  const supabase = getSupabaseClient();
-  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
-
-  // If the ID is a temporary local string (e.g. "exam-1786876191136"), insert as a real DB row instead of failing with 22P02
-  if (!isValidUuid(id)) {
-    console.warn(`⚠️ Exam ID "${id}" is not a valid UUID. Auto-inserting as new exam in Supabase.`);
-    return dbCreateExam(exam as any);
-  }
-
-  try {
-    const payload: any = {};
-    if (exam.course_id !== undefined) payload.course_id = isValidUuid(exam.course_id) ? exam.course_id : null;
-    if (exam.title !== undefined) payload.title = exam.title.trim();
-    if (exam.description !== undefined || exam.syllabus !== undefined || exam.subject !== undefined) {
-      payload.description = (exam.description || exam.syllabus || exam.subject || "").trim();
-    }
-    if (exam.exam_type !== undefined || exam.category !== undefined) {
-      let et = exam.exam_type || "model_test";
-      if (exam.category === "daily_live" || et === "daily_live") et = "live_exam";
-      else if (exam.category === "premium_ntrca" || et === "premium_ntrca") et = "full_test";
-      else if (["model_test", "daily_test", "chapter_test", "full_test", "live_exam"].includes(et)) {
-        // valid
-      } else {
-        et = "model_test";
-      }
-      payload.exam_type = et;
-    }
-    if (exam.total_questions !== undefined) payload.total_questions = Number(exam.total_questions);
-    if (exam.duration_minutes !== undefined) payload.duration_minutes = Number(exam.duration_minutes);
-    if (exam.total_marks !== undefined) payload.total_marks = Number(exam.total_marks);
-    if (exam.negative_mark !== undefined || exam.negative_marking !== undefined) {
-      payload.negative_mark = Number(exam.negative_mark ?? exam.negative_marking ?? 0.25);
-    }
-    if (exam.pass_mark !== undefined || exam.pass_marks !== undefined) {
-      payload.pass_mark = Number(exam.pass_mark ?? exam.pass_marks ?? 20);
-    }
-    if (exam.exam_date !== undefined || exam.start_time !== undefined) {
-      payload.exam_date = exam.exam_date || exam.start_time;
-    }
-    if (exam.is_free !== undefined) payload.is_free = Boolean(exam.is_free);
-    if (exam.is_published !== undefined) payload.is_published = Boolean(exam.is_published);
-    if (exam.sort_order !== undefined) payload.sort_order = Number(exam.sort_order);
-
-    console.log(`🚀 Executing Supabase UPDATE on 'exams' (${id}):`, payload);
-
-    const { data, error } = await supabase
-      .from("exams")
-      .update(payload)
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error("❌ Supabase UPDATE 'exams' Error:", {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-        payload,
-      });
-      return {
-        data: null,
-        error: error.message,
-        errorObj: {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        },
-      };
-    }
-    return { data: data as Exam, error: null };
-  } catch (err: any) {
-    console.error("❌ Unexpected Error in dbUpdateExam:", err);
-    return {
-      data: null,
-      error: err?.message || "পরীক্ষা আপডেট করা যায়নি।",
-      errorObj: {
-        message: err?.message || "Unexpected exception",
-        code: "UNEXPECTED_ERROR",
-      },
-    };
-  }
-}
-
-export async function dbDeleteExam(id: string): Promise<ServiceResult<boolean>> {
-  const supabase = getSupabaseClient();
-  if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
-
-  if (!isValidUuid(id)) {
-    return { data: true, error: null };
-  }
-
-  try {
-    console.log(`🚀 Executing Supabase DELETE on 'exams' (${id})`);
-    const { error } = await supabase.from("exams").delete().eq("id", id);
-    if (error) {
-      console.error("❌ Supabase DELETE 'exams' Error:", {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-      });
-      return {
-        data: false,
-        error: error.message,
-        errorObj: {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        },
-      };
-    }
-    return { data: true, error: null };
-  } catch (err: any) {
-    console.error("❌ Unexpected Error in dbDeleteExam:", err);
-    return {
-      data: false,
-      error: err?.message || "পরীক্ষা মুছে ফেলা যায়নি।",
-      errorObj: {
-        message: err?.message || "Unexpected exception",
-        code: "UNEXPECTED_ERROR",
-      },
-    };
-  }
-}
-
-// -------------------------------------------------------------
-// 8. QUESTIONS CRUD (প্রশ্ন ব্যাংক হাব)
-// -------------------------------------------------------------
-export async function dbFetchQuestions(examId?: string): Promise<ServiceResult<Question[]>> {
-  const supabase = getSupabaseClient();
-  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
-
-  try {
-    let query = supabase.from("questions").select("*");
-    if (examId) {
-      if (!isValidUuid(examId)) {
-        return { data: [], error: null };
-      }
-      query = query.eq("exam_id", examId);
-    }
-    const { data, error } = await query
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: false });
-
-    if (error) return { data: null, error: error.message };
-
-    // Format into standard Question entity with rich fallback mappings
-    const formatted: Question[] = ((data as any[]) || []).map((row) => {
+    const allQuestions: Question[] = ((questionsRes.data as any[]) || []).map((row, idx) => {
       const optionsArr = [
         row.option_a || "",
         row.option_b || "",
@@ -1065,14 +1022,16 @@ export async function dbFetchQuestions(examId?: string): Promise<ServiceResult<Q
         row.option_d || "",
       ];
       let correctIdx = 0;
-      if (row.correct_option === "option_b" || row.correct_option === "b" || row.correct_option === "১") correctIdx = 1;
-      else if (row.correct_option === "option_c" || row.correct_option === "c" || row.correct_option === "২") correctIdx = 2;
-      else if (row.correct_option === "option_d" || row.correct_option === "d" || row.correct_option === "৩") correctIdx = 3;
+      const co = String(row.correct_option || "").toLowerCase().trim();
+      if (co === "option_b" || co === "b" || co === "খ" || co === "১" || co === "1") correctIdx = 1;
+      else if (co === "option_c" || co === "c" || co === "গ" || co === "২" || co === "2") correctIdx = 2;
+      else if (co === "option_d" || co === "d" || co === "ঘ" || co === "৩" || co === "3") correctIdx = 3;
 
       return {
         id: row.id,
         exam_id: row.exam_id || undefined,
-        question_number: row.question_number || 1,
+        free_exam_id: row.free_exam_id || undefined,
+        question_number: Number(row.question_number || idx + 1),
         question_text: row.question_text || row.question || "",
         arabic_text: row.arabic_text || undefined,
         option_a: row.option_a || optionsArr[0] || "",
@@ -1082,12 +1041,11 @@ export async function dbFetchQuestions(examId?: string): Promise<ServiceResult<Q
         correct_option: row.correct_option || "option_a",
         explanation: row.explanation || "",
         source: row.source || "",
-        marks: Number(row.marks || 1),
-        negative_marks: Number(row.negative_marks || 0.25),
+        marks: Number(row.marks ?? 1),
+        negative_marks: Number(row.negative_marks ?? 0.25),
         image_url: row.image_url || "",
-        sort_order: row.sort_order || 0,
+        sort_order: Number(row.sort_order ?? idx),
         created_at: row.created_at || new Date().toISOString(),
-        // UI helper properties:
         question: row.question_text || row.question || "",
         options: optionsArr,
         correct_index: correctIdx,
@@ -1097,6 +1055,212 @@ export async function dbFetchQuestions(examId?: string): Promise<ServiceResult<Q
         difficulty: row.difficulty || "Medium",
         exam_type: row.exam_type || "NTRCA",
         language: row.language || "bn",
+        exam_scope: row.free_exam_id ? "free" : "course",
+      };
+    });
+
+    const courseExams = courseExamsRes.data || [];
+    const freeExams = freeExamsRes.data || [];
+
+    const unifiedList: Exam[] = [];
+
+    // Map Course Exams
+    for (const ce of courseExams) {
+      const linkedQs = allQuestions.filter((q) => q.exam_id === ce.id);
+      unifiedList.push({
+        id: ce.id,
+        course_id: ce.course_id,
+        title: ce.title,
+        description: ce.description,
+        exam_type: ce.exam_type,
+        total_questions: linkedQs.length || ce.total_questions || 0,
+        duration_minutes: ce.duration_minutes,
+        total_marks: ce.total_marks,
+        negative_mark: ce.negative_mark,
+        pass_mark: ce.pass_mark,
+        exam_date: ce.exam_date,
+        is_free: false,
+        is_published: ce.is_published,
+        sort_order: ce.sort_order,
+        created_at: ce.created_at,
+        updated_at: ce.updated_at,
+        category: ce.category || "model_test",
+        subject: ce.subject || "কোর্স পরীক্ষা",
+        syllabus: ce.syllabus || ce.description || "",
+        pass_marks: ce.pass_mark,
+        negative_marking: ce.negative_mark,
+        start_time: ce.exam_date,
+        status: ce.status || "live",
+        questions: linkedQs,
+        participant_count: ce.participant_count || 0,
+        exam_scope: "course",
+      });
+    }
+
+    // Map Free Exams
+    for (const fe of freeExams) {
+      const linkedQs = allQuestions.filter((q) => q.free_exam_id === fe.id);
+      unifiedList.push({
+        id: fe.id,
+        course_id: null,
+        title: fe.title,
+        description: fe.description,
+        exam_type: fe.exam_type || "model_test",
+        total_questions: linkedQs.length || fe.total_questions || 0,
+        duration_minutes: fe.duration_minutes,
+        total_marks: fe.total_marks,
+        negative_mark: fe.negative_mark || 0.25,
+        pass_mark: fe.pass_mark || 20,
+        exam_date: fe.exam_date || fe.created_at,
+        is_free: true,
+        is_published: fe.is_published ?? true,
+        sort_order: fe.sort_order || 0,
+        created_at: fe.created_at,
+        updated_at: fe.updated_at,
+        category: "free_test",
+        subject: fe.subject || "ফ্রি মডেল টেস্ট",
+        syllabus: fe.syllabus || fe.description || "",
+        pass_marks: fe.pass_mark || 20,
+        negative_marking: fe.negative_mark || 0.25,
+        start_time: fe.exam_date,
+        status: fe.is_active ? "live" : "upcoming",
+        questions: linkedQs,
+        participant_count: fe.participant_count || 0,
+        exam_scope: "free",
+      });
+    }
+
+    return { data: unifiedList, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || "পরীক্ষা তালিকা লোড করা সম্ভব হয়নি।" };
+  }
+}
+
+export async function dbCreateExam(
+  exam: Omit<Exam, "id" | "created_at" | "updated_at">
+): Promise<ServiceResult<Exam>> {
+  // If course_id is present and valid, save in course_exams table
+  if (exam.course_id && isValidUuid(exam.course_id)) {
+    const res = await dbCreateCourseExam({
+      ...exam,
+      course_id: exam.course_id,
+    } as any);
+    if (res.error) return { data: null, error: res.error, errorObj: res.errorObj };
+    return { data: res.data as any, error: null };
+  }
+
+  // Otherwise, save in free_exams table
+  const res = await dbCreateFreeExam({
+    ...exam,
+    is_active: true,
+  } as any);
+  if (res.error) return { data: null, error: res.error, errorObj: res.errorObj };
+  return { data: res.data as any, error: null };
+}
+
+export async function dbUpdateExam(id: string, exam: Partial<Exam>): Promise<ServiceResult<Exam>> {
+  if (!isValidUuid(id)) {
+    return dbCreateExam(exam as any);
+  }
+
+  // Try updating course_exams if course_id is present
+  if (exam.course_id && isValidUuid(exam.course_id)) {
+    const res = await dbUpdateCourseExam(id, exam as any);
+    if (res.data) return { data: res.data as any, error: null };
+  }
+
+  // Try free_exams
+  const feRes = await dbUpdateFreeExam(id, exam as any);
+  if (feRes.data) return { data: feRes.data as any, error: null };
+
+  // Fallback to course_exams without course_id change
+  const ceRes = await dbUpdateCourseExam(id, exam as any);
+  if (ceRes.data) return { data: ceRes.data as any, error: null };
+
+  return { data: null, error: feRes.error || ceRes.error || "পরীক্ষা আপডেট করা সম্ভব হয়নি।" };
+}
+
+export async function dbDeleteExam(id: string): Promise<ServiceResult<boolean>> {
+  if (!isValidUuid(id)) return { data: true, error: null };
+
+  const [ceRes, feRes] = await Promise.all([
+    dbDeleteCourseExam(id),
+    dbDeleteFreeExam(id),
+  ]);
+
+  return { data: ceRes.data || feRes.data, error: null };
+}
+
+// -------------------------------------------------------------
+// 8. QUESTIONS CRUD (Dual FK: `exam_id` vs `free_exam_id`)
+// -------------------------------------------------------------
+export async function dbFetchQuestions(
+  examId?: string,
+  freeExamId?: string
+): Promise<ServiceResult<Question[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+
+  try {
+    let query = supabase.from("questions").select("*");
+
+    if (examId && isValidUuid(examId)) {
+      query = query.eq("exam_id", examId);
+    } else if (freeExamId && isValidUuid(freeExamId)) {
+      query = query.eq("free_exam_id", freeExamId);
+    }
+
+    const { data, error } = await query
+      .order("question_number", { ascending: true })
+      .order("sort_order", { ascending: true });
+
+    if (error) {
+      console.error("❌ Supabase SELECT 'questions' Error:", error);
+      return { data: null, error: error.message, errorObj: error };
+    }
+
+    const formatted: Question[] = ((data as any[]) || []).map((row, idx) => {
+      const optionsArr = [
+        row.option_a || "",
+        row.option_b || "",
+        row.option_c || "",
+        row.option_d || "",
+      ];
+      let correctIdx = 0;
+      const co = String(row.correct_option || "").toLowerCase().trim();
+      if (co === "option_b" || co === "b" || co === "খ" || co === "১" || co === "1") correctIdx = 1;
+      else if (co === "option_c" || co === "c" || co === "গ" || co === "২" || co === "2") correctIdx = 2;
+      else if (co === "option_d" || co === "d" || co === "ঘ" || co === "৩" || co === "3") correctIdx = 3;
+
+      return {
+        id: row.id,
+        exam_id: row.exam_id || undefined,
+        free_exam_id: row.free_exam_id || undefined,
+        question_number: Number(row.question_number || idx + 1),
+        question_text: row.question_text || row.question || "",
+        arabic_text: row.arabic_text || undefined,
+        option_a: row.option_a || optionsArr[0] || "",
+        option_b: row.option_b || optionsArr[1] || "",
+        option_c: row.option_c || optionsArr[2] || "",
+        option_d: row.option_d || optionsArr[3] || "",
+        correct_option: row.correct_option || "option_a",
+        explanation: row.explanation || "",
+        source: row.source || "",
+        marks: Number(row.marks ?? 1),
+        negative_marks: Number(row.negative_marks ?? 0.25),
+        image_url: row.image_url || "",
+        sort_order: Number(row.sort_order ?? idx),
+        created_at: row.created_at || new Date().toISOString(),
+        question: row.question_text || row.question || "",
+        options: optionsArr,
+        correct_index: correctIdx,
+        topic: row.topic || "সাধারণ",
+        subject_id: row.subject_id || "sub-1",
+        subject_name: row.subject_name || "মাদ্রাসা কারিকুলাম",
+        difficulty: row.difficulty || "Medium",
+        exam_type: row.exam_type || "NTRCA",
+        language: row.language || "bn",
+        exam_scope: row.free_exam_id ? "free" : "course",
       };
     });
 
@@ -1107,21 +1271,50 @@ export async function dbFetchQuestions(examId?: string): Promise<ServiceResult<Q
 }
 
 export async function dbCreateQuestion(
-  q: Partial<Question> & { exam_id?: string; question_text?: string; question?: string }
+  q: Partial<Question> & { exam_id?: string | null; free_exam_id?: string | null; question_text?: string; question?: string }
 ): Promise<ServiceResult<Question>> {
   const supabase = getSupabaseClient();
   if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
 
   try {
-    const qText = (q.question_text || q.question || "").trim();
-    if (!qText) {
-      return { data: null, error: "প্রশ্নের বিবরণ দেওয়া আবশ্যক।" };
+    // 1. Validate target exam (must have exam_id OR free_exam_id)
+    const hasExamId = q.exam_id && isValidUuid(q.exam_id);
+    const hasFreeExamId = q.free_exam_id && isValidUuid(q.free_exam_id);
+
+    if (!hasExamId && !hasFreeExamId) {
+      const errMsg = "অনুগ্রহ করে একটি কোর্স পরীক্ষা অথবা ফ্রি মডেল টেস্ট নির্বাচন করুন।";
+      return {
+        data: null,
+        error: errMsg,
+        errorObj: { message: errMsg, code: "MISSING_EXAM_LINK" },
+      };
     }
 
-    const optA = q.option_a || (q.options ? q.options[0] : "") || "ক";
-    const optB = q.option_b || (q.options ? q.options[1] : "") || "খ";
-    const optC = q.option_c || (q.options ? q.options[2] : "") || "গ";
-    const optD = q.option_d || (q.options ? q.options[3] : "") || "ঘ";
+    // 2. Validate question text
+    const qText = (q.question_text || q.question || "").trim();
+    if (!qText) {
+      const errMsg = "প্রশ্নের বিবরণ দেওয়া আবশ্যক।";
+      return {
+        data: null,
+        error: errMsg,
+        errorObj: { message: errMsg, code: "MISSING_QUESTION_TEXT" },
+      };
+    }
+
+    // 3. Validate options
+    const optA = (q.option_a || (q.options ? q.options[0] : "") || "").trim();
+    const optB = (q.option_b || (q.options ? q.options[1] : "") || "").trim();
+    const optC = (q.option_c || (q.options ? q.options[2] : "") || "").trim();
+    const optD = (q.option_d || (q.options ? q.options[3] : "") || "").trim();
+
+    if (!optA || !optB || !optC || !optD) {
+      const errMsg = "দয়া করে ৪টি বিকল্প (ক, খ, গ, ঘ) অবশ্যই পূরণ করুন।";
+      return {
+        data: null,
+        error: errMsg,
+        errorObj: { message: errMsg, code: "MISSING_OPTIONS" },
+      };
+    }
 
     let correctOpt = q.correct_option || "option_a";
     if (q.correct_index !== undefined) {
@@ -1129,103 +1322,88 @@ export async function dbCreateQuestion(
       correctOpt = mapIdx[q.correct_index] || "option_a";
     }
 
-    const targetExamId = isValidUuid(q.exam_id) ? q.exam_id : null;
-
-    // Try rich payload first
-    const richPayload: any = {
-      question_number: q.question_number || 1,
+    const payload: any = {
+      exam_id: hasExamId ? q.exam_id : null,
+      free_exam_id: hasFreeExamId ? q.free_exam_id : null,
+      question_number: Number(q.question_number || 1),
       question_text: qText,
-      arabic_text: q.arabic_text || null,
       option_a: optA,
       option_b: optB,
       option_c: optC,
       option_d: optD,
       correct_option: correctOpt,
-      explanation: q.explanation || "",
-      source: q.source || null,
+      explanation: (q.explanation || "").trim(),
+      marks: Number(q.marks ?? 1),
+      negative_marks: Number(q.negative_marks ?? 0.25),
+      image_url: q.image_url || null,
+      sort_order: Number(q.sort_order ?? 0),
+    };
+
+    console.log("🚀 Executing Supabase INSERT on 'questions':", payload);
+
+    let { data, error } = await supabase.from("questions").insert(payload).select().single();
+
+    // Check constraint retry if needed
+    if (error && (error.code === "23514" || error.message.includes("check constraint") || error.message.includes("correct_option"))) {
+      const letterMap: Record<string, string> = {
+        option_a: "A",
+        option_b: "B",
+        option_c: "C",
+        option_d: "D",
+      };
+      payload.correct_option = letterMap[correctOpt] || "A";
+      const retryRes = await supabase.from("questions").insert(payload).select().single();
+      data = retryRes.data;
+      error = retryRes.error;
+    }
+
+    if (error) {
+      console.error("❌ Supabase INSERT 'questions' Error:", error);
+      return { data: null, error: error.message, errorObj: error };
+    }
+
+    const row = data;
+    const formatted: Question = {
+      id: row.id,
+      exam_id: row.exam_id,
+      free_exam_id: row.free_exam_id,
+      question_number: Number(row.question_number || payload.question_number),
+      question_text: row.question_text || qText,
+      arabic_text: q.arabic_text,
+      option_a: row.option_a || optA,
+      option_b: row.option_b || optB,
+      option_c: row.option_c || optC,
+      option_d: row.option_d || optD,
+      correct_option: row.correct_option || correctOpt,
+      explanation: row.explanation || payload.explanation,
+      source: q.source || "",
+      marks: Number(row.marks ?? payload.marks),
+      negative_marks: Number(row.negative_marks ?? payload.negative_marks),
+      image_url: row.image_url || "",
+      sort_order: Number(row.sort_order ?? payload.sort_order),
+      created_at: row.created_at || new Date().toISOString(),
+      question: row.question_text || qText,
+      options: [row.option_a || optA, row.option_b || optB, row.option_c || optC, row.option_d || optD],
+      correct_index:
+        row.correct_option === "option_b" || row.correct_option === "B" || row.correct_option === "b"
+          ? 1
+          : row.correct_option === "option_c" || row.correct_option === "C" || row.correct_option === "c"
+          ? 2
+          : row.correct_option === "option_d" || row.correct_option === "D" || row.correct_option === "d"
+          ? 3
+          : 0,
+      topic: q.topic || "সাধারণ",
       subject_id: q.subject_id || "sub-1",
       subject_name: q.subject_name || "মাদ্রাসা কারিকুলাম",
-      topic: q.topic || "সাধারণ",
       difficulty: q.difficulty || "Medium",
       exam_type: q.exam_type || "NTRCA",
       language: q.language || "bn",
-      marks: Number(q.marks || 1),
-      negative_marks: Number(q.negative_marks || 0.25),
-      image_url: q.image_url || null,
-      sort_order: q.sort_order || 0,
-    };
-    if (targetExamId) {
-      richPayload.exam_id = targetExamId;
-    }
-
-    let insertRes = await supabase.from("questions").insert(richPayload).select().single();
-
-    // Fallback if custom columns don't exist in Supabase yet (42703)
-    if (insertRes.error && (insertRes.error.code === "42703" || insertRes.error.message.includes("column"))) {
-      const basePayload: any = {
-        question_number: q.question_number || 1,
-        question_text: qText,
-        option_a: optA,
-        option_b: optB,
-        option_c: optC,
-        option_d: optD,
-        correct_option: correctOpt,
-        explanation: q.explanation || "",
-        marks: Number(q.marks || 1),
-        negative_marks: Number(q.negative_marks || 0.25),
-        image_url: q.image_url || null,
-        sort_order: q.sort_order || 0,
-      };
-      if (targetExamId) {
-        basePayload.exam_id = targetExamId;
-      }
-      insertRes = await supabase.from("questions").insert(basePayload).select().single();
-    }
-
-    if (insertRes.error) {
-      return { data: null, error: insertRes.error.message, errorObj: insertRes.error };
-    }
-
-    const data = insertRes.data;
-    const formatted: Question = {
-      id: data.id,
-      exam_id: data.exam_id || q.exam_id,
-      question_number: data.question_number || 1,
-      question_text: data.question_text || qText,
-      arabic_text: data.arabic_text || q.arabic_text,
-      option_a: data.option_a || optA,
-      option_b: data.option_b || optB,
-      option_c: data.option_c || optC,
-      option_d: data.option_d || optD,
-      correct_option: data.correct_option || correctOpt,
-      explanation: data.explanation || q.explanation || "",
-      source: data.source || q.source || "",
-      marks: Number(data.marks || q.marks || 1),
-      negative_marks: Number(data.negative_marks || q.negative_marks || 0.25),
-      image_url: data.image_url || q.image_url || "",
-      sort_order: data.sort_order || 0,
-      created_at: data.created_at || new Date().toISOString(),
-      question: data.question_text || qText,
-      options: [data.option_a || optA, data.option_b || optB, data.option_c || optC, data.option_d || optD],
-      correct_index:
-        data.correct_option === "option_b" || data.correct_option === "b"
-          ? 1
-          : data.correct_option === "option_c" || data.correct_option === "c"
-          ? 2
-          : data.correct_option === "option_d" || data.correct_option === "d"
-          ? 3
-          : 0,
-      topic: data.topic || q.topic || "সাধারণ",
-      subject_id: data.subject_id || q.subject_id || "sub-1",
-      subject_name: data.subject_name || q.subject_name || "মাদ্রাসা কারিকুলাম",
-      difficulty: data.difficulty || q.difficulty || "Medium",
-      exam_type: data.exam_type || q.exam_type || "NTRCA",
-      language: data.language || q.language || "bn",
+      exam_scope: row.free_exam_id ? "free" : "course",
     };
 
     return { data: formatted, error: null };
   } catch (err: any) {
-    return { data: null, error: err?.message || "প্রশ্ন তৈরি করা সম্ভব হয়নি।" };
+    return { data: null, error: err?.message || "প্রশ্ন তৈরি করা সম্ভব হয়নি।" };
   }
 }
 
@@ -1238,106 +1416,105 @@ export async function dbCreateBulkQuestions(
   try {
     if (qs.length === 0) return { data: [], error: null };
 
-    const buildPayloads = (rich: boolean) =>
-      qs.map((q, idx) => {
-        const optA = q.option_a || (q.options ? q.options[0] : "") || "ক";
-        const optB = q.option_b || (q.options ? q.options[1] : "") || "খ";
-        const optC = q.option_c || (q.options ? q.options[2] : "") || "গ";
-        const optD = q.option_d || (q.options ? q.options[3] : "") || "ঘ";
+    const payloads = qs.map((q, idx) => {
+      const hasExamId = q.exam_id && isValidUuid(q.exam_id);
+      const hasFreeExamId = q.free_exam_id && isValidUuid(q.free_exam_id);
 
-        let correctOpt = q.correct_option || "option_a";
-        if (q.correct_index !== undefined) {
-          const mapIdx: Record<number, string> = { 0: "option_a", 1: "option_b", 2: "option_c", 3: "option_d" };
-          correctOpt = mapIdx[q.correct_index] || "option_a";
-        }
+      const optA = (q.option_a || (q.options ? q.options[0] : "") || "ক").trim();
+      const optB = (q.option_b || (q.options ? q.options[1] : "") || "খ").trim();
+      const optC = (q.option_c || (q.options ? q.options[2] : "") || "গ").trim();
+      const optD = (q.option_d || (q.options ? q.options[3] : "") || "ঘ").trim();
 
-        const resolvedExamId = isValidUuid(q.exam_id) ? q.exam_id : null;
+      let correctOpt = q.correct_option || "option_a";
+      if (q.correct_index !== undefined) {
+        const mapIdx: Record<number, string> = { 0: "option_a", 1: "option_b", 2: "option_c", 3: "option_d" };
+        correctOpt = mapIdx[q.correct_index] || "option_a";
+      }
 
-        const baseObj: any = {
-          question_number: q.question_number || idx + 1,
-          question_text: (q.question_text || q.question || "").trim(),
-          option_a: optA,
-          option_b: optB,
-          option_c: optC,
-          option_d: optD,
-          correct_option: correctOpt,
-          explanation: q.explanation || "",
-          marks: Number(q.marks || 1),
-          negative_marks: Number(q.negative_marks || 0.25),
-          sort_order: idx,
-        };
-        if (resolvedExamId) {
-          baseObj.exam_id = resolvedExamId;
-        }
+      return {
+        exam_id: hasExamId ? q.exam_id : null,
+        free_exam_id: hasFreeExamId ? q.free_exam_id : null,
+        question_number: Number(q.question_number || idx + 1),
+        question_text: (q.question_text || q.question || "").trim(),
+        option_a: optA,
+        option_b: optB,
+        option_c: optC,
+        option_d: optD,
+        correct_option: correctOpt,
+        explanation: (q.explanation || "").trim(),
+        marks: Number(q.marks ?? 1),
+        negative_marks: Number(q.negative_marks ?? 0.25),
+        image_url: q.image_url || null,
+        sort_order: Number(q.sort_order ?? idx),
+      };
+    });
 
-        if (rich) {
-          return {
-            ...baseObj,
-            arabic_text: q.arabic_text || null,
-            source: q.source || null,
-            subject_id: q.subject_id || "sub-1",
-            subject_name: q.subject_name || "মাদ্রাসা কারিকুলাম",
-            topic: q.topic || "সাধারণ",
-            difficulty: q.difficulty || "Medium",
-            exam_type: q.exam_type || "NTRCA",
-            language: q.language || "bn",
-          };
-        }
-        return baseObj;
-      });
+    console.log(`🚀 Executing Supabase Bulk INSERT on 'questions' (${payloads.length} items)`);
 
-    let insertRes = await supabase.from("questions").insert(buildPayloads(true)).select();
+    let { data, error } = await supabase.from("questions").insert(payloads).select();
 
-    // Fallback if rich columns missing
-    if (insertRes.error && (insertRes.error.code === "42703" || insertRes.error.message.includes("column"))) {
-      insertRes = await supabase.from("questions").insert(buildPayloads(false)).select();
+    if (error && (error.code === "23514" || error.message.includes("check constraint") || error.message.includes("correct_option"))) {
+      const letterMap: Record<string, string> = {
+        option_a: "A",
+        option_b: "B",
+        option_c: "C",
+        option_d: "D",
+      };
+      const altPayloads = payloads.map((p) => ({
+        ...p,
+        correct_option: letterMap[p.correct_option] || "A",
+      }));
+      const retryRes = await supabase.from("questions").insert(altPayloads).select();
+      data = retryRes.data;
+      error = retryRes.error;
     }
 
-    if (insertRes.error) {
-      return { data: null, error: insertRes.error.message, errorObj: insertRes.error };
-    }
+    if (error) return { data: null, error: error.message, errorObj: error };
 
-    const formatted: Question[] = ((insertRes.data as any[]) || []).map((row, idx) => {
+    const formatted: Question[] = ((data as any[]) || []).map((row, idx) => {
       const original = qs[idx] || {};
       return {
         id: row.id,
-        exam_id: row.exam_id || original.exam_id,
-        question_number: row.question_number || idx + 1,
+        exam_id: row.exam_id,
+        free_exam_id: row.free_exam_id,
+        question_number: Number(row.question_number || idx + 1),
         question_text: row.question_text,
-        arabic_text: row.arabic_text || original.arabic_text,
+        arabic_text: original.arabic_text,
         option_a: row.option_a,
         option_b: row.option_b,
         option_c: row.option_c,
         option_d: row.option_d,
         correct_option: row.correct_option,
         explanation: row.explanation || original.explanation || "",
-        source: row.source || original.source || "",
-        marks: Number(row.marks || original.marks || 1),
-        negative_marks: Number(row.negative_marks || original.negative_marks || 0.25),
-        sort_order: row.sort_order || idx,
+        source: original.source || "",
+        marks: Number(row.marks ?? original.marks ?? 1),
+        negative_marks: Number(row.negative_marks ?? original.negative_marks ?? 0.25),
+        image_url: row.image_url || "",
+        sort_order: Number(row.sort_order ?? idx),
         created_at: row.created_at || new Date().toISOString(),
         question: row.question_text,
         options: [row.option_a, row.option_b, row.option_c, row.option_d],
         correct_index:
-          row.correct_option === "option_b" || row.correct_option === "b"
+          row.correct_option === "option_b" || row.correct_option === "B" || row.correct_option === "b"
             ? 1
-            : row.correct_option === "option_c" || row.correct_option === "c"
+            : row.correct_option === "option_c" || row.correct_option === "C" || row.correct_option === "c"
             ? 2
-            : row.correct_option === "option_d" || row.correct_option === "d"
+            : row.correct_option === "option_d" || row.correct_option === "D" || row.correct_option === "d"
             ? 3
             : 0,
-        topic: row.topic || original.topic || "সাধারণ",
-        subject_id: row.subject_id || original.subject_id || "sub-1",
-        subject_name: row.subject_name || original.subject_name || "মাদ্রাসা কারিকুলাম",
-        difficulty: row.difficulty || original.difficulty || "Medium",
-        exam_type: row.exam_type || original.exam_type || "NTRCA",
-        language: row.language || original.language || "bn",
+        topic: original.topic || "সাধারণ",
+        subject_id: original.subject_id || "sub-1",
+        subject_name: original.subject_name || "মাদ্রাসা কারিকুলাম",
+        difficulty: original.difficulty || "Medium",
+        exam_type: original.exam_type || "NTRCA",
+        language: original.language || "bn",
+        exam_scope: row.free_exam_id ? "free" : "course",
       };
     });
 
     return { data: formatted, error: null };
   } catch (err: any) {
-    return { data: null, error: err?.message || "বাল্ক প্রশ্ন সংরক্ষণ করা যায়নি।" };
+    return { data: null, error: err?.message || "বাল্ক প্রশ্ন সংরক্ষণ করা সম্ভব হয়নি।" };
   }
 }
 
@@ -1355,22 +1532,25 @@ export async function dbUpdateQuestion(
   try {
     const payload: any = {};
     if (q.exam_id !== undefined) {
-      payload.exam_id = isValidUuid(q.exam_id) ? q.exam_id : (q.exam_id === "" || q.exam_id === null ? null : undefined);
+      payload.exam_id = isValidUuid(q.exam_id) ? q.exam_id : null;
     }
+    if (q.free_exam_id !== undefined) {
+      payload.free_exam_id = isValidUuid(q.free_exam_id) ? q.free_exam_id : null;
+    }
+    if (q.question_number !== undefined) payload.question_number = Number(q.question_number);
     if (q.question_text !== undefined || q.question !== undefined) {
       payload.question_text = (q.question_text || q.question || "").trim();
     }
-    if (q.arabic_text !== undefined) payload.arabic_text = q.arabic_text;
-    if (q.option_a !== undefined) payload.option_a = q.option_a;
-    if (q.option_b !== undefined) payload.option_b = q.option_b;
-    if (q.option_c !== undefined) payload.option_c = q.option_c;
-    if (q.option_d !== undefined) payload.option_d = q.option_d;
+    if (q.option_a !== undefined) payload.option_a = q.option_a.trim();
+    if (q.option_b !== undefined) payload.option_b = q.option_b.trim();
+    if (q.option_c !== undefined) payload.option_c = q.option_c.trim();
+    if (q.option_d !== undefined) payload.option_d = q.option_d.trim();
 
     if (q.options && q.options.length >= 4) {
-      payload.option_a = q.options[0];
-      payload.option_b = q.options[1];
-      payload.option_c = q.options[2];
-      payload.option_d = q.options[3];
+      payload.option_a = (q.options[0] || "").trim();
+      payload.option_b = (q.options[1] || "").trim();
+      payload.option_c = (q.options[2] || "").trim();
+      payload.option_d = (q.options[3] || "").trim();
     }
 
     if (q.correct_option !== undefined) {
@@ -1380,83 +1560,113 @@ export async function dbUpdateQuestion(
       payload.correct_option = mapIdx[q.correct_index] || "option_a";
     }
 
-    if (q.explanation !== undefined) payload.explanation = q.explanation;
-    if (q.source !== undefined) payload.source = q.source;
-    if (q.subject_id !== undefined) payload.subject_id = q.subject_id;
-    if (q.subject_name !== undefined) payload.subject_name = q.subject_name;
-    if (q.topic !== undefined) payload.topic = q.topic;
-    if (q.difficulty !== undefined) payload.difficulty = q.difficulty;
-    if (q.exam_type !== undefined) payload.exam_type = q.exam_type;
-    if (q.language !== undefined) payload.language = q.language;
+    if (q.explanation !== undefined) payload.explanation = q.explanation.trim();
     if (q.marks !== undefined) payload.marks = Number(q.marks);
     if (q.negative_marks !== undefined) payload.negative_marks = Number(q.negative_marks);
     if (q.image_url !== undefined) payload.image_url = q.image_url;
-    if (q.sort_order !== undefined) payload.sort_order = q.sort_order;
+    if (q.sort_order !== undefined) payload.sort_order = Number(q.sort_order);
 
-    let updateRes = await supabase
+    let { data, error } = await supabase
       .from("questions")
       .update(payload)
       .eq("id", id)
       .select()
       .single();
 
-    // Fallback if some columns not present in Supabase
-    if (updateRes.error && (updateRes.error.code === "42703" || updateRes.error.message.includes("column"))) {
-      const corePayload: any = {
-        question_text: payload.question_text,
-        option_a: payload.option_a,
-        option_b: payload.option_b,
-        option_c: payload.option_c,
-        option_d: payload.option_d,
-        correct_option: payload.correct_option,
-        explanation: payload.explanation,
-        marks: payload.marks,
-        negative_marks: payload.negative_marks,
+    if (error && (error.code === "23514" || error.message.includes("check constraint") || error.message.includes("correct_option"))) {
+      const letterMap: Record<string, string> = {
+        option_a: "A",
+        option_b: "B",
+        option_c: "C",
+        option_d: "D",
       };
-      Object.keys(corePayload).forEach((k) => corePayload[k] === undefined && delete corePayload[k]);
-      updateRes = await supabase.from("questions").update(corePayload).eq("id", id).select().single();
+      payload.correct_option = letterMap[payload.correct_option] || "A";
+      const retryRes = await supabase.from("questions").update(payload).eq("id", id).select().single();
+      data = retryRes.data;
+      error = retryRes.error;
     }
 
-    if (updateRes.error) return { data: null, error: updateRes.error.message };
+    if (error) return { data: null, error: error.message, errorObj: error };
 
-    const data = updateRes.data;
+    const row = data;
     const formatted: Question = {
-      ...data,
-      question: data.question_text,
-      options: [data.option_a, data.option_b, data.option_c, data.option_d],
+      ...row,
+      question: row.question_text,
+      options: [row.option_a, row.option_b, row.option_c, row.option_d],
       correct_index:
-        data.correct_option === "option_b" || data.correct_option === "b"
+        row.correct_option === "option_b" || row.correct_option === "B" || row.correct_option === "b"
           ? 1
-          : data.correct_option === "option_c" || data.correct_option === "c"
+          : row.correct_option === "option_c" || row.correct_option === "C" || row.correct_option === "c"
           ? 2
-          : data.correct_option === "option_d" || data.correct_option === "d"
+          : row.correct_option === "option_d" || row.correct_option === "D" || row.correct_option === "d"
           ? 3
           : 0,
-      topic: data.topic || q.topic || "সাধারণ",
-      subject_id: data.subject_id || q.subject_id || "sub-1",
-      subject_name: data.subject_name || q.subject_name || "মাদ্রাসা কারিকুলাম",
+      topic: q.topic || "সাধারণ",
+      subject_id: q.subject_id || "sub-1",
+      subject_name: q.subject_name || "মাদ্রাসা কারিকুলাম",
+      exam_scope: row.free_exam_id ? "free" : "course",
     };
 
     return { data: formatted, error: null };
   } catch (err: any) {
-    return { data: null, error: err?.message || "প্রশ্ন আপডেট করা যায়নি।" };
+    return { data: null, error: err?.message || "প্রশ্ন আপডেট করা যায়নি।" };
   }
 }
 
 export async function dbDeleteQuestion(id: string): Promise<ServiceResult<boolean>> {
   const supabase = getSupabaseClient();
   if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
-
-  if (!isValidUuid(id)) {
-    return { data: true, error: null };
-  }
+  if (!isValidUuid(id)) return { data: true, error: null };
 
   try {
     const { error } = await supabase.from("questions").delete().eq("id", id);
     if (error) return { data: false, error: error.message };
     return { data: true, error: null };
   } catch (err: any) {
-    return { data: false, error: err?.message || "প্রশ্ন মুছে ফেলা যায়নি।" };
+    return { data: false, error: err?.message || "প্রশ্ন মুছে ফেলা যায়নি।" };
+  }
+}
+
+// -------------------------------------------------------------
+// 8.1 DIRECT COUNT UTILITIES
+// -------------------------------------------------------------
+export async function dbCountQuestions(): Promise<number> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return 0;
+  try {
+    const { count, error } = await supabase
+      .from("questions")
+      .select("*", { count: "exact", head: true });
+    if (error) return 0;
+    return count || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function dbCountCourseExams(): Promise<number> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return 0;
+  try {
+    const { count } = await supabase
+      .from("course_exams")
+      .select("*", { count: "exact", head: true });
+    return count || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function dbCountFreeExams(): Promise<number> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return 0;
+  try {
+    const { count } = await supabase
+      .from("free_exams")
+      .select("*", { count: "exact", head: true });
+    return count || 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -1577,9 +1787,7 @@ export async function dbFetchExamResults(
   try {
     let query = supabase.from("exam_results").select(`
       *,
-      profiles:user_id (full_name, avatar_url),
-      exams:exam_id (title),
-      courses:course_id (title)
+      profiles:user_id (full_name, avatar_url)
     `);
 
     if (examId) query = query.eq("exam_id", examId);
@@ -1606,8 +1814,8 @@ export async function dbFetchExamResults(
       submitted_at: row.submitted_at || new Date().toISOString(),
       student_name: row.profiles?.full_name || "তামরীন শিক্ষার্থী",
       avatar_url: row.profiles?.avatar_url,
-      exam_title: row.exams?.title || "মডেল টেস্ট",
-      course_title: row.courses?.title,
+      exam_title: row.exam_title || "মডেল টেস্ট",
+      course_title: row.course_title,
     }));
 
     return { data: formatted, error: null };
@@ -1641,7 +1849,8 @@ export async function dbFetchLeaderboard(
 // -------------------------------------------------------------
 export async function dbAssignQuestionsToExam(
   examId: string,
-  questionIds: string[]
+  questionIds: string[],
+  isFreeExam: boolean = false
 ): Promise<ServiceResult<boolean>> {
   const supabase = getSupabaseClient();
   if (!supabase) return { data: false, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
@@ -1651,9 +1860,13 @@ export async function dbAssignQuestionsToExam(
   try {
     const validQIds = questionIds.filter(isValidUuid);
     if (validQIds.length > 0) {
+      const updatePayload = isFreeExam
+        ? { free_exam_id: examId, exam_id: null }
+        : { exam_id: examId, free_exam_id: null };
+
       const { error } = await supabase
         .from("questions")
-        .update({ exam_id: examId })
+        .update(updatePayload)
         .in("id", validQIds);
 
       if (error) {
@@ -1662,11 +1875,19 @@ export async function dbAssignQuestionsToExam(
       }
     }
 
-    // Also update total_questions count on the exam
-    await supabase
-      .from("exams")
+    // Also update total_questions count on the target exam table
+    const targetTable = isFreeExam ? "free_exams" : "course_exams";
+    const { error: countErr } = await supabase
+      .from(targetTable)
       .update({ total_questions: questionIds.length, total_marks: questionIds.length })
       .eq("id", examId);
+
+    if (countErr && targetTable === "course_exams") {
+      await supabase
+        .from("exams")
+        .update({ total_questions: questionIds.length, total_marks: questionIds.length })
+        .eq("id", examId);
+    }
 
     return { data: true, error: null };
   } catch (err: any) {
@@ -1677,7 +1898,8 @@ export async function dbAssignQuestionsToExam(
 export async function dbAutoPopulateExamQuestions(
   examId: string,
   count: number = 10,
-  subjectHint?: string
+  subjectHint?: string,
+  isFreeExam: boolean = false
 ): Promise<ServiceResult<{ linkedCount: number }>> {
   const supabase = getSupabaseClient();
   if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
@@ -1714,16 +1936,21 @@ export async function dbAutoPopulateExamQuestions(
       return { data: { linkedCount: 0 }, error: null };
     }
 
+    const updatePayload = isFreeExam
+      ? { free_exam_id: examId, exam_id: null }
+      : { exam_id: examId, free_exam_id: null };
+
     const { error: updateErr } = await supabase
       .from("questions")
-      .update({ exam_id: examId })
+      .update(updatePayload)
       .in("id", selectedIds);
 
     if (updateErr) return { data: null, error: updateErr.message };
 
     // Update exam total_questions count
+    const targetTable = isFreeExam ? "free_exams" : "course_exams";
     await supabase
-      .from("exams")
+      .from(targetTable)
       .update({ total_questions: selectedIds.length, total_marks: selectedIds.length })
       .eq("id", examId);
 
@@ -1738,37 +1965,58 @@ export async function dbAutoLinkAllEmptyExams(): Promise<ServiceResult<{ fixedEx
   if (!supabase) return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
 
   try {
-    const { data: exams, error: exErr } = await supabase.from("exams").select("id, title, subject, total_questions");
-    if (exErr) return { data: null, error: exErr.message };
-    if (!exams || exams.length === 0) return { data: { fixedExams: 0, totalQuestionsLinked: 0 }, error: null };
+    const [cExRes, fExRes, qRes] = await Promise.all([
+      dbFetchCourseExams(),
+      dbFetchFreeExams(),
+      supabase.from("questions").select("id, exam_id, free_exam_id, subject_name, topic"),
+    ]);
 
-    const { data: allQuestions, error: qErr } = await supabase.from("questions").select("id, exam_id, subject_name, topic");
-    if (qErr) return { data: null, error: qErr.message };
-    if (!allQuestions || allQuestions.length === 0) return { data: { fixedExams: 0, totalQuestionsLinked: 0 }, error: null };
+    const allQuestions = qRes.data || [];
+    if (allQuestions.length === 0) {
+      return { data: { fixedExams: 0, totalQuestionsLinked: 0 }, error: null };
+    }
 
     let fixedExams = 0;
     let totalQuestionsLinked = 0;
 
-    for (const ex of exams) {
+    // Link empty course exams
+    for (const ex of (cExRes.data || [])) {
       const alreadyLinked = allQuestions.filter((q) => q.exam_id === ex.id);
       if (alreadyLinked.length === 0) {
-        // Find candidate questions
         let matched = allQuestions.filter(
           (q) =>
             (ex.subject && q.subject_name && ex.subject.toLowerCase().includes(q.subject_name.toLowerCase())) ||
             (ex.title && q.topic && ex.title.toLowerCase().includes(q.topic.toLowerCase()))
         );
-
-        if (matched.length === 0) {
-          matched = allQuestions.slice(0, 10);
-        } else {
-          matched = matched.slice(0, 10);
-        }
+        if (matched.length === 0) matched = allQuestions.slice(0, 10);
+        else matched = matched.slice(0, 10);
 
         const idsToLink = matched.map((q) => q.id);
         if (idsToLink.length > 0) {
           await supabase.from("questions").update({ exam_id: ex.id }).in("id", idsToLink);
-          await supabase.from("exams").update({ total_questions: idsToLink.length, total_marks: idsToLink.length }).eq("id", ex.id);
+          await supabase.from("course_exams").update({ total_questions: idsToLink.length, total_marks: idsToLink.length }).eq("id", ex.id);
+          fixedExams++;
+          totalQuestionsLinked += idsToLink.length;
+        }
+      }
+    }
+
+    // Link empty free exams
+    for (const fe of (fExRes.data || [])) {
+      const alreadyLinked = allQuestions.filter((q) => q.free_exam_id === fe.id);
+      if (alreadyLinked.length === 0) {
+        let matched = allQuestions.filter(
+          (q) =>
+            (fe.subject && q.subject_name && fe.subject.toLowerCase().includes(q.subject_name.toLowerCase())) ||
+            (fe.title && q.topic && fe.title.toLowerCase().includes(q.topic.toLowerCase()))
+        );
+        if (matched.length === 0) matched = allQuestions.slice(0, 10);
+        else matched = matched.slice(0, 10);
+
+        const idsToLink = matched.map((q) => q.id);
+        if (idsToLink.length > 0) {
+          await supabase.from("questions").update({ free_exam_id: fe.id }).in("id", idsToLink);
+          await supabase.from("free_exams").update({ total_questions: idsToLink.length, total_marks: idsToLink.length }).eq("id", fe.id);
           fixedExams++;
           totalQuestionsLinked += idsToLink.length;
         }

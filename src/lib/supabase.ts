@@ -109,18 +109,19 @@ export async function checkSupabaseConnection(): Promise<{ success: boolean; mes
     }
 
     // 2. Test other key tables in parallel
-    const [coursesCheck, examsCheck, questionsCheck] = await Promise.all([
+    const [coursesCheck, courseExamsCheck, freeExamsCheck, questionsCheck] = await Promise.all([
       supabase.from("courses").select("id", { count: "exact", head: true }),
-      supabase.from("exams").select("id", { count: "exact", head: true }),
+      supabase.from("course_exams").select("id", { count: "exact", head: true }),
+      supabase.from("free_exams").select("id", { count: "exact", head: true }),
       supabase.from("questions").select("id", { count: "exact", head: true }),
     ]);
 
-    const isFullyMigrated = !coursesCheck.error && !examsCheck.error && !questionsCheck.error;
+    const isFullyMigrated = !coursesCheck.error && !courseExamsCheck.error && !freeExamsCheck.error && !questionsCheck.error;
 
     return {
       success: true,
       message: isFullyMigrated
-        ? "Supabase PostgreSQL ক্লাউড ডাটাবেজ ও সমস্ত টেবিল সফলভাবে সংযুক্ত ও রিয়েল-টাইমে সক্রিয় রয়েছে!"
+        ? "Supabase PostgreSQL ক্লাউড ডাটাবেজ (course_exams, free_exams, questions) সফলভাবে সংযুক্ত ও রিয়েল-টাইমে সক্রিয় রয়েছে!"
         : "Supabase সার্ভার কানেক্ট হয়েছে, কিছু টেবিল মাইগ্রেশন বাকি থাকতে পারে।",
       details: {
         serverConnected: true,
@@ -257,10 +258,10 @@ CREATE TABLE IF NOT EXISTS public.course_materials (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 9. Exams Table (exams - for Course-linked & standard exams)
-CREATE TABLE IF NOT EXISTS public.exams (
+-- 9. Course Exams Table (course_exams - exclusively for Course-linked exams)
+CREATE TABLE IF NOT EXISTS public.course_exams (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  course_id UUID REFERENCES public.courses(id) ON DELETE SET NULL,
+  course_id UUID NOT NULL REFERENCES public.courses(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   description TEXT,
   exam_type TEXT NOT NULL DEFAULT 'model_test' CHECK (exam_type IN ('model_test', 'daily_test', 'chapter_test', 'full_test', 'live_exam')),
@@ -277,7 +278,7 @@ CREATE TABLE IF NOT EXISTS public.exams (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
-// 9B. Free Exams Table (free_exams - for Open/Free Model Tests)
+-- 9B. Free Exams Table (free_exams - exclusively for Free Exams & Model Tests)
 CREATE TABLE IF NOT EXISTS public.free_exams (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   title TEXT NOT NULL,
@@ -286,7 +287,7 @@ CREATE TABLE IF NOT EXISTS public.free_exams (
   duration_minutes INT NOT NULL DEFAULT 30,
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
-  -- Additional fields for rich model test & curriculum compatibility:
+  -- Model Test details
   subject TEXT DEFAULT 'সাধারণ ও মাদ্রাসা কারিকুলাম',
   exam_type TEXT NOT NULL DEFAULT 'model_test' CHECK (exam_type IN ('model_test', 'daily_test', 'chapter_test', 'full_test', 'live_exam')),
   total_questions INT NOT NULL DEFAULT 0,
@@ -299,10 +300,11 @@ CREATE TABLE IF NOT EXISTS public.free_exams (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 10. Questions Table (questions)
+-- 10. Questions Table (questions - dual foreign keys to course_exams and free_exams)
 CREATE TABLE IF NOT EXISTS public.questions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  exam_id UUID,
+  exam_id UUID REFERENCES public.course_exams(id) ON DELETE CASCADE,
+  free_exam_id UUID REFERENCES public.free_exams(id) ON DELETE CASCADE,
   subject_id TEXT,
   subject_name TEXT,
   topic TEXT,
@@ -349,7 +351,8 @@ CREATE TABLE IF NOT EXISTS public.course_enrollments (
 CREATE TABLE IF NOT EXISTS public.exam_results (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  exam_id UUID NOT NULL REFERENCES public.exams(id) ON DELETE CASCADE,
+  exam_id UUID, -- References course_exams(id) or free_exams(id)
+  free_exam_id UUID REFERENCES public.free_exams(id) ON DELETE CASCADE,
   course_id UUID REFERENCES public.courses(id) ON DELETE SET NULL,
   score NUMERIC NOT NULL DEFAULT 0,
   total_marks NUMERIC NOT NULL DEFAULT 100,
@@ -367,6 +370,7 @@ SELECT
   er.id,
   er.course_id,
   er.exam_id,
+  er.free_exam_id,
   er.user_id,
   p.full_name,
   p.avatar_url,
@@ -397,8 +401,11 @@ CREATE TRIGGER tr_profiles_updated_at BEFORE UPDATE ON public.profiles FOR EACH 
 DROP TRIGGER IF EXISTS tr_courses_updated_at ON public.courses;
 CREATE TRIGGER tr_courses_updated_at BEFORE UPDATE ON public.courses FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 
-DROP TRIGGER IF EXISTS tr_exams_updated_at ON public.exams;
-CREATE TRIGGER tr_exams_updated_at BEFORE UPDATE ON public.exams FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+DROP TRIGGER IF EXISTS tr_course_exams_updated_at ON public.course_exams;
+CREATE TRIGGER tr_course_exams_updated_at BEFORE UPDATE ON public.course_exams FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+DROP TRIGGER IF EXISTS tr_free_exams_updated_at ON public.free_exams;
+CREATE TRIGGER tr_free_exams_updated_at BEFORE UPDATE ON public.free_exams FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 
 DROP TRIGGER IF EXISTS tr_enrollments_updated_at ON public.course_enrollments;
 CREATE TRIGGER tr_enrollments_updated_at BEFORE UPDATE ON public.course_enrollments FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
@@ -446,7 +453,7 @@ ALTER TABLE public.course_routines ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.course_syllabus_modules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.course_syllabus_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.course_materials ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.exams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.course_exams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.free_exams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.questions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.course_enrollments ENABLE ROW LEVEL SECURITY;
@@ -474,8 +481,8 @@ CREATE POLICY "Allow all on course_syllabus_items" ON public.course_syllabus_ite
 DROP POLICY IF EXISTS "Allow all on course_materials" ON public.course_materials;
 CREATE POLICY "Allow all on course_materials" ON public.course_materials FOR ALL USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Allow all on exams" ON public.exams;
-CREATE POLICY "Allow all on exams" ON public.exams FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all on course_exams" ON public.course_exams;
+CREATE POLICY "Allow all on course_exams" ON public.course_exams FOR ALL USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Allow all on free_exams" ON public.free_exams;
 CREATE POLICY "Allow all on free_exams" ON public.free_exams FOR ALL USING (true) WITH CHECK (true);
@@ -498,7 +505,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE
   public.course_syllabus_modules, 
   public.course_syllabus_items, 
   public.course_materials, 
-  public.exams, 
+  public.course_exams, 
   public.free_exams,
   public.questions, 
   public.course_enrollments, 
@@ -520,7 +527,7 @@ ALTER TABLE IF EXISTS public.course_routines DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.course_syllabus_modules DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.course_syllabus_items DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.course_materials DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.exams DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.course_exams DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.free_exams DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.questions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.course_enrollments DISABLE ROW LEVEL SECURITY;
@@ -534,7 +541,8 @@ ALTER TABLE IF EXISTS public.app_settings DISABLE ROW LEVEL SECURITY;
 -- 2. Drop all legacy restrictive policies
 DROP POLICY IF EXISTS "Admins have full access on profiles" ON public.profiles;
 DROP POLICY IF EXISTS "Admins have full access on courses" ON public.courses;
-DROP POLICY IF EXISTS "Admins have full access on exams" ON public.exams;
+DROP POLICY IF EXISTS "Admins have full access on course_exams" ON public.course_exams;
+DROP POLICY IF EXISTS "Admins have full access on free_exams" ON public.free_exams;
 DROP POLICY IF EXISTS "Admins have full access on questions" ON public.questions;
 DROP POLICY IF EXISTS "Admins have full access on course_enrollments" ON public.course_enrollments;
 DROP POLICY IF EXISTS "Admins have full access on exam_results" ON public.exam_results;
@@ -545,16 +553,45 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
 `;
 
-// Standalone Migration SQL script for 'free_exams' table
-export const SUPABASE_FREE_EXAMS_MIGRATION_SQL = `-- ==============================================================================
--- 🚀 TAMREEN SUPABASE MIGRATION: CREATE 'free_exams' TABLE
+// Standalone Migration SQL script for 'course_exams' & 'free_exams' table rename & split
+export const SUPABASE_EXAM_SYSTEM_MIGRATION_SQL = `-- ==============================================================================
+-- 🚀 TAMREEN SUPABASE MIGRATION: EXAM SYSTEM ARCHITECTURE (course_exams + free_exams)
 -- Paste and run this script in Supabase Dashboard -> SQL Editor -> Run (F5)
 -- ==============================================================================
 
 -- 1. Enable UUID extension if not already enabled
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 2. Create free_exams Table
+-- 2. Rename old 'exams' table to 'course_exams' (if 'exams' exists and 'course_exams' does not)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'exams') 
+     AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'course_exams') THEN
+    ALTER TABLE public.exams RENAME TO course_exams;
+  END IF;
+END $$;
+
+-- 3. Create 'course_exams' table if it still doesn't exist
+CREATE TABLE IF NOT EXISTS public.course_exams (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  course_id UUID NOT NULL REFERENCES public.courses(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  exam_type TEXT NOT NULL DEFAULT 'model_test',
+  total_questions INT NOT NULL DEFAULT 0,
+  duration_minutes INT NOT NULL DEFAULT 30,
+  total_marks NUMERIC NOT NULL DEFAULT 50,
+  negative_mark NUMERIC NOT NULL DEFAULT 0.25,
+  pass_mark NUMERIC NOT NULL DEFAULT 20,
+  exam_date TIMESTAMPTZ,
+  is_free BOOLEAN NOT NULL DEFAULT FALSE,
+  is_published BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- 4. Create 'free_exams' table
 CREATE TABLE IF NOT EXISTS public.free_exams (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   title TEXT NOT NULL,
@@ -563,7 +600,6 @@ CREATE TABLE IF NOT EXISTS public.free_exams (
   duration_minutes INT NOT NULL DEFAULT 30,
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
-  -- Model Test details
   subject TEXT DEFAULT 'সাধারণ ও মাদ্রাসা কারিকুলাম',
   exam_type TEXT NOT NULL DEFAULT 'model_test',
   total_questions INT NOT NULL DEFAULT 0,
@@ -576,23 +612,46 @@ CREATE TABLE IF NOT EXISTS public.free_exams (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 3. Enable Row Level Security (RLS)
-ALTER TABLE public.free_exams ENABLE ROW LEVEL SECURITY;
+-- 5. Add 'free_exam_id' column to 'questions' table if missing
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'questions' AND column_name = 'free_exam_id'
+  ) THEN
+    ALTER TABLE public.questions ADD COLUMN free_exam_id UUID REFERENCES public.free_exams(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
--- 4. Create Policies for Public and Authenticated Access
+-- 6. Enable RLS and create permissive policies
+ALTER TABLE public.course_exams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.free_exams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.questions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow all on course_exams" ON public.course_exams;
+CREATE POLICY "Allow all on course_exams" ON public.course_exams FOR ALL USING (true) WITH CHECK (true);
+
 DROP POLICY IF EXISTS "Allow all on free_exams" ON public.free_exams;
 CREATE POLICY "Allow all on free_exams" ON public.free_exams FOR ALL USING (true) WITH CHECK (true);
 
--- 5. Grant Permissions to anon, authenticated, and service_role
-GRANT ALL ON TABLE public.free_exams TO anon, authenticated, service_role;
+DROP POLICY IF EXISTS "Allow all on questions" ON public.questions;
+CREATE POLICY "Allow all on questions" ON public.questions FOR ALL USING (true) WITH CHECK (true);
 
--- 6. Add to Realtime publication if available
+-- 7. Grant Permissions to anon, authenticated, and service_role
+GRANT ALL ON TABLE public.course_exams TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.free_exams TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.questions TO anon, authenticated, service_role;
+
+-- 8. Add to Realtime publication
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.free_exams;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.course_exams, public.free_exams;
   END IF;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
 `;
+
+// Standalone Migration SQL script for 'free_exams' table
+export const SUPABASE_FREE_EXAMS_MIGRATION_SQL = SUPABASE_EXAM_SYSTEM_MIGRATION_SQL;

@@ -16,11 +16,13 @@ import {
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import { Question, QuestionDifficulty, ExamTargetCategory } from "../../types";
+import { isValidUuid } from "../../lib/supabaseService";
 
 interface QuestionFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   questionToEdit?: Question | null;
+  initialExamId?: string;
 }
 
 type LanguageMode = "bn" | "en" | "ar" | "mixed";
@@ -43,12 +45,16 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
   isOpen,
   onClose,
   questionToEdit,
+  initialExamId,
 }) => {
   const { subjects, exams, addQuestion, updateQuestion, addSubject, showToast } = useAdminData();
 
   // Language & Option styling
   const [language, setLanguage] = useState<LanguageMode>("bn");
   const [optionStyle, setOptionStyle] = useState<OptionPrefixStyle>("bn");
+
+  // Exam / Model test linking (Mandatory)
+  const [examId, setExamId] = useState<string>("");
 
   // Subject state (Dropdown vs Manual custom subject)
   const [isCustomSubject, setIsCustomSubject] = useState<boolean>(false);
@@ -59,9 +65,6 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
 
   // Topic state (Manual input with quick suggestions)
   const [topic, setTopic] = useState<string>("");
-
-  // Exam / Model test linking
-  const [examId, setExamId] = useState<string>("");
 
   // Question & Arabic content
   const [questionText, setQuestionText] = useState<string>("");
@@ -81,7 +84,7 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
   useEffect(() => {
     if (questionToEdit) {
       setLanguage((questionToEdit.language as LanguageMode) || "bn");
-      setExamId(questionToEdit.exam_id || "");
+      setExamId(questionToEdit.exam_id || initialExamId || (exams[0]?.id || ""));
 
       // Check if subject exists in subjects list
       const existingSub = subjects.find((s) => s.id === questionToEdit.subject_id);
@@ -123,7 +126,7 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
       setCustomSubjectNameAr("");
       setSaveCustomSubjectPermanently(true);
       setTopic("");
-      setExamId("");
+      setExamId(initialExamId || (exams[0]?.id || ""));
       setQuestionText("");
       setArabicText("");
       setOptionsList(["", "", "", ""]);
@@ -133,7 +136,7 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
       setDifficulty("Medium");
       setExamType("NTRCA");
     }
-  }, [questionToEdit, subjects, isOpen]);
+  }, [questionToEdit, initialExamId, subjects, exams, isOpen]);
 
   if (!isOpen) return null;
 
@@ -192,14 +195,25 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    // 1. Validate exam selection
+    if (!examId || !isValidUuid(examId)) {
+      showToast("অনুগ্রহ করে একটি পরীক্ষা নির্বাচন করুন।", "error");
+      return;
+    }
+
+    const targetExam = exams.find((e) => e.id === examId);
+    const isTargetFreeExam = Boolean(targetExam?.is_free || !targetExam?.course_id);
+
+    // 2. Validate question text
     if (!questionText.trim()) {
       showToast("দয়া করে মূল প্রশ্নটি লিখুন", "error");
       return;
     }
 
+    // 3. Validate options (All 4 options required)
     const validOptions = optionsList.map((o) => o.trim());
-    if (!validOptions[0] || !validOptions[1]) {
-      showToast("দয়া করে প্রথম দুটি বিকল্প (ক এবং খ) অবশ্যই পূরণ করুন", "error");
+    if (!validOptions[0] || !validOptions[1] || !validOptions[2] || !validOptions[3]) {
+      showToast("দয়া করে ৪টি বিকল্প (ক, খ, গ, ঘ) অবশ্যই পূরণ করুন", "error");
       return;
     }
 
@@ -242,7 +256,8 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
     };
 
     const qData: any = {
-      exam_id: examId || undefined,
+      exam_id: isTargetFreeExam ? null : examId,
+      free_exam_id: isTargetFreeExam ? examId : null,
       subject_id: finalSubjectId,
       subject_name: finalSubjectName,
       topic: topic.trim() || "সাধারণ",
@@ -251,8 +266,8 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
       arabic_text: arabicText.trim() || undefined,
       option_a: validOptions[0],
       option_b: validOptions[1],
-      option_c: validOptions[2] || "গ",
-      option_d: validOptions[3] || "ঘ",
+      option_c: validOptions[2],
+      option_d: validOptions[3],
       options: validOptions,
       correct_index: correctIndex < validOptions.length ? correctIndex : 0,
       correct_option: optMap[correctIndex] || "option_a",
@@ -267,6 +282,8 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
       difficulty,
       exam_type: examType,
       language,
+      marks: 1,
+      negative_marks: 0.25,
     };
 
     if (questionToEdit) {
@@ -407,6 +424,52 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+          {/* SECTION 0: MANDATORY EXAM SELECTION (Target Exam UUID for Supabase questions.exam_id or questions.free_exam_id) */}
+          <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-800/60 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5 text-xs">
+                <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <span>টার্গেট পরীক্ষা বা মডেল টেস্ট নির্বাচন করুন * (course_exams বা free_exams)</span>
+              </label>
+              {examId && (
+                <span className="font-mono text-[10px] px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-semibold truncate max-w-[220px]">
+                  UUID: {examId}
+                </span>
+              )}
+            </div>
+            <select
+              value={examId}
+              onChange={(e) => setExamId(e.target.value)}
+              required
+              className="w-full px-3 py-2 rounded-xl border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+            >
+              <option value="">-- পরীক্ষা বা মডেল টেস্ট নির্বাচন করুন (বাধ্যতামূলক) --</option>
+              <optgroup label="🎓 কোর্স পরীক্ষা (course_exams -> questions.exam_id)">
+                {exams.filter((ex) => ex.course_id && !ex.is_free).map((ex) => (
+                  <option key={ex.id} value={ex.id}>
+                    🎓 {ex.title} (ID: {ex.id.substring(0, 8)}...)
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="🎁 ফ্রি পরীক্ষা ও মডেল টেস্ট (free_exams -> questions.free_exam_id)">
+                {exams.filter((ex) => !ex.course_id || ex.is_free).map((ex) => (
+                  <option key={ex.id} value={ex.id}>
+                    🎁 {ex.title} (ID: {ex.id.substring(0, 8)}...)
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+            {exams.length === 0 ? (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                ⚠️ কোনো পরীক্ষা পাওয়া যায়নি। প্রথমে 'মডেল টেস্ট' বা 'কোর্স' ট্যাব থেকে একটি পরীক্ষা তৈরি করুন।
+              </p>
+            ) : !examId ? (
+              <p className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">
+                ⚠️ প্রশ্ন সুপাবেজ ডাটাবেজে সংরক্ষণ করতে অবশ্যই একটি পরীক্ষা নির্বাচন করুন।
+              </p>
+            ) : null}
+          </div>
+
           {/* SECTION 1: Subject (বিষয়) & Topic (টপিক) - Manual & Dropdown options */}
           <div className="p-3.5 rounded-2xl bg-emerald-50/50 dark:bg-slate-800/40 border border-emerald-200/60 dark:border-slate-700 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-100 dark:border-slate-700/60 pb-2">
@@ -544,25 +607,6 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
                   </div>
                 )}
               </div>
-            </div>
-
-            {/* Model Test Linker (Optional) */}
-            <div className="pt-1">
-              <label className="font-semibold text-slate-600 dark:text-slate-400 block mb-1">
-                মডেল টেস্ট বা পরীক্ষায় সরাসরি লিংক করুন (ঐচ্ছিক):
-              </label>
-              <select
-                value={examId}
-                onChange={(e) => setExamId(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
-              >
-                <option value="">সেন্ট্রাল প্রশ্ন ব্যাংক (সাধারণ উন্মুক্ত প্রশ্ন)</option>
-                {exams.map((ex) => (
-                  <option key={ex.id} value={ex.id}>
-                    {ex.title}
-                  </option>
-                ))}
-              </select>
             </div>
           </div>
 

@@ -24,7 +24,8 @@ export type ExamTargetCategory = "NTRCA" | "Dakhil" | "Alim" | "Fazil" | "Kamil"
 
 export interface Question {
   id: string;
-  exam_id?: string;
+  exam_id?: string | null; // References course_exams.id (for Course Exams)
+  free_exam_id?: string | null; // References free_exams.id (for Free Exams / Model Tests)
   question_number?: number;
   question_text?: string;
   option_a?: string;
@@ -51,6 +52,7 @@ export interface Question {
   exam_type: ExamTargetCategory;
   tags?: string[];
   language?: "bn" | "en" | "ar" | "mixed";
+  exam_scope?: "course" | "free";
 }
 
 export type ExamCategory = "free_test" | "daily_live" | "weekly_model_test" | "monthly_mega" | "premium_ntrca" | "model_test" | "daily_test" | "chapter_test" | "full_test" | "live_exam";
@@ -58,7 +60,42 @@ export type ExamStatus = "upcoming" | "live" | "completed" | "archived";
 
 export interface Exam {
   id: string;
-  course_id?: string;
+  course_id?: string | null; // Mandatory for Course Exam, null for Free Exam
+  title: string;
+  description?: string;
+  exam_type?: "model_test" | "daily_test" | "chapter_test" | "full_test" | "live_exam" | string;
+  total_questions?: number;
+  duration_minutes: number;
+  total_marks: number;
+  negative_mark?: number;
+  pass_mark?: number;
+  exam_date?: string;
+  is_free?: boolean;
+  is_published?: boolean;
+  is_active?: boolean;
+  sort_order?: number;
+  created_at: string;
+  updated_at?: string;
+  // UI / helper properties:
+  category?: ExamCategory;
+  subject?: string;
+  syllabus?: string;
+  pass_marks?: number;
+  negative_marking?: number;
+  start_time?: string;
+  end_time?: string;
+  result_published?: boolean;
+  status?: ExamStatus;
+  questions?: Question[];
+  participant_count?: number;
+  banner_image?: string;
+  is_featured?: boolean;
+  exam_scope?: "course" | "free";
+}
+
+export interface CourseExam {
+  id: string;
+  course_id: string; // Mandatory valid UUID
   title: string;
   description?: string;
   exam_type?: "model_test" | "daily_test" | "chapter_test" | "full_test" | "live_exam" | string;
@@ -73,20 +110,39 @@ export interface Exam {
   sort_order?: number;
   created_at: string;
   updated_at?: string;
-  // UI / legacy helper properties:
-  category?: ExamCategory;
   subject?: string;
   syllabus?: string;
-  pass_marks?: number;
-  negative_marking?: number;
-  start_time?: string;
-  end_time?: string;
-  result_published?: boolean;
   status?: ExamStatus;
+  category?: ExamCategory;
   questions?: Question[];
   participant_count?: number;
-  banner_image?: string;
-  is_featured?: boolean;
+  exam_scope?: "course";
+}
+
+export interface FreeExam {
+  id: string;
+  title: string;
+  description?: string;
+  total_marks: number;
+  duration_minutes: number;
+  created_at: string;
+  is_active: boolean;
+  subject?: string;
+  exam_type?: string;
+  total_questions?: number;
+  negative_mark?: number;
+  pass_mark?: number;
+  exam_date?: string;
+  is_free?: boolean;
+  is_published?: boolean;
+  sort_order?: number;
+  updated_at?: string;
+  syllabus?: string;
+  status?: ExamStatus;
+  category?: ExamCategory;
+  questions?: Question[];
+  participant_count?: number;
+  exam_scope?: "free";
 }
 
 export interface ExamSubmission {
