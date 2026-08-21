@@ -34,7 +34,8 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
   onOpenBulkParser,
   onOpenAiGenerator,
 }) => {
-  const { questions, subjects, deleteQuestion, addBulkQuestions, showToast, searchQuery, setSearchQuery } = useAdminData();
+  const { questions, subjects, deleteQuestion, addBulkQuestions, showToast, searchQuery, setSearchQuery, syncAllQuestionsToSupabase } = useAdminData();
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
 
   const [selectedSubject, setSelectedSubject] = useState<string>("all");
   const [selectedTopic, setSelectedTopic] = useState<string>("all");
@@ -171,7 +172,21 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={async () => {
+                setIsSyncingCloud(true);
+                await syncAllQuestionsToSupabase();
+                setIsSyncingCloud(false);
+              }}
+              disabled={isSyncingCloud}
+              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm shadow-emerald-600/20 cursor-pointer"
+              title="সকল প্রশ্ন Supabase ডাটাবেজে সিঙ্ক ও সংরক্ষণ করুন"
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${isSyncingCloud ? "animate-spin" : ""}`} />
+              <span>{isSyncingCloud ? "সিঙ্ক হচ্ছে..." : "Supabase-এ সব প্রশ্ন সিঙ্ক করুন"}</span>
+            </button>
+
             <span className="text-xs font-semibold px-3 py-1 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 rounded-full">
               মোট প্রশ্ন: {questions.length.toLocaleString("bn-BD")} টি
             </span>

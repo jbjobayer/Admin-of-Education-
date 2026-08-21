@@ -56,6 +56,7 @@ import {
   dbAssignQuestionsToExam,
   dbAutoPopulateExamQuestions,
   dbAutoLinkAllEmptyExams,
+  dbSyncAllLocalQuestionsToSupabase,
 } from "../lib/supabaseService";
 
 export type AdminTab =
@@ -120,6 +121,7 @@ interface AdminDataContextType {
   assignQuestionsToExam: (examId: string, questionIds: string[]) => Promise<void>;
   autoPopulateExamQuestions: (examId: string, count?: number) => Promise<void>;
   autoLinkAllEmptyExams: () => Promise<void>;
+  syncAllQuestionsToSupabase: () => Promise<{ success: boolean; message: string; count?: number }>;
 
   // Course CRUD & Granular Buttons (courses table)
   addCourse: (c: Omit<Course, "id" | "created_at" | "enrolled_count">) => Course;
@@ -1080,6 +1082,24 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
+  const syncAllQuestionsToSupabase = async (): Promise<{ success: boolean; message: string; count?: number }> => {
+    showToast("Supabase ডাটাবেজে প্রশ্ন ও পরীক্ষার সম্পর্ক সিঙ্ক করা হচ্ছে...", "info");
+    try {
+      const res = await dbSyncAllLocalQuestionsToSupabase(questions, exams);
+      if (res.error) {
+        showToast(`সিঙ্ক করতে সমস্যা হয়েছে: ${res.error}`, "error");
+        return { success: false, message: res.error };
+      }
+      const msg = res.data?.message || "সকল প্রশ্ন Supabase-এ সিঙ্ক হয়েছে!";
+      showToast(msg, "success");
+      return { success: true, message: msg, count: res.data?.syncedQuestionsCount };
+    } catch (err: any) {
+      const msg = err?.message || "সিঙ্ক ব্যর্থ হয়েছে।";
+      showToast(msg, "error");
+      return { success: false, message: msg };
+    }
+  };
+
   // -------------------------------------------------------------
   // Course CRUD (courses table)
   // -------------------------------------------------------------
@@ -1515,6 +1535,7 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         assignQuestionsToExam,
         autoPopulateExamQuestions,
         autoLinkAllEmptyExams,
+        syncAllQuestionsToSupabase,
 
         addCourse,
         updateCourse,
