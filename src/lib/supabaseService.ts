@@ -984,7 +984,7 @@ export async function saveOrUpdateExamQuestions(
   rawQuestions: (Partial<Question> | any)[],
   isFree: boolean = false
 ): Promise<{ success: boolean; data: Question[]; error?: string; errorObj?: any }> {
-  const res = await dbInsertExamQuestions(examId, rawQuestions);
+  const res = await dbInsertExamQuestions(examId, rawQuestions, isFree);
   if (res.error || !res.data) {
     return { success: false, data: [], error: res.error || "প্রশ্ন সংরক্ষণ ব্যর্থ", errorObj: res.errorObj };
   }
@@ -1238,7 +1238,7 @@ export async function dbCreateFreeExam(
     // Attach/link questions if provided
     let syncedQuestions = exam.questions || [];
     if (exam.questions && Array.isArray(exam.questions) && exam.questions.length > 0 && data?.id) {
-      const qRes = await dbInsertExamQuestions(data.id, exam.questions);
+      const qRes = await dbInsertExamQuestions(data.id, exam.questions, true);
       if (qRes.error) {
         console.error("❌ Questions failed to insert for free exam:", qRes.error);
         return {
@@ -1694,15 +1694,22 @@ export async function dbCreateQuestion(
 
     // Handle check constraint (23514) on correct_option representation
     if (error && (error.code === "23514" || error.message?.includes("check constraint") || error.message?.includes("correct_option"))) {
-      console.warn("⚠️ Check constraint on correct_option, trying alternate representations:", error.message);
-      const letterMap: Record<string, string> = { option_a: "A", option_b: "B", option_c: "C", option_d: "D" };
-      const altPayload = {
-        ...payload,
-        correct_option: letterMap[correctOpt] || "A",
-      };
-      const retryRes = await supabase.from("questions").upsert(altPayload).select().single();
-      data = retryRes.data;
-      error = retryRes.error;
+      console.warn("⚠️ Check constraint on correct_option, trying candidate formats:", error.message);
+      const cIdx = getQuestionCorrectIndex(q);
+      for (const format of CORRECT_OPTION_FORMAT_CANDIDATES) {
+        const altPayload = {
+          ...payload,
+          correct_option: format[cIdx] || format[0],
+        };
+        const retryRes = await supabase.from("questions").upsert(altPayload).select().single();
+        if (!retryRes.error && retryRes.data) {
+          data = retryRes.data;
+          error = null;
+          console.log(`✅ Question inserted successfully with format: ${format[0]}`);
+          break;
+        }
+        error = retryRes.error;
+      }
     }
 
     if (error) {
@@ -2001,16 +2008,17 @@ export async function dbUpdateQuestion(
       .single();
 
     if (error && (error.code === "23514" || error.message.includes("check constraint") || error.message.includes("correct_option"))) {
-      const letterMap: Record<string, string> = {
-        option_a: "A",
-        option_b: "B",
-        option_c: "C",
-        option_d: "D",
-      };
-      payload.correct_option = letterMap[payload.correct_option] || "A";
-      const retryRes = await supabase.from("questions").update(payload).eq("id", id).select().single();
-      data = retryRes.data;
-      error = retryRes.error;
+      const cIdx = getQuestionCorrectIndex(q);
+      for (const format of CORRECT_OPTION_FORMAT_CANDIDATES) {
+        payload.correct_option = format[cIdx] || format[0];
+        const retryRes = await supabase.from("questions").update(payload).eq("id", id).select().single();
+        if (!retryRes.error && retryRes.data) {
+          data = retryRes.data;
+          error = null;
+          break;
+        }
+        error = retryRes.error;
+      }
     }
 
     if (error) return { data: null, error: error.message, errorObj: error };
