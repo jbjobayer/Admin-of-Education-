@@ -18,6 +18,7 @@ import {
   Plus,
   Tag,
   FolderPlus,
+  Loader2,
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import { Question } from "../../types";
@@ -125,6 +126,7 @@ export const BulkPasteParserModal: React.FC<BulkPasteParserModalProps> = ({
 
   const [selectedExamId, setSelectedExamId] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [parsedQuestions, setParsedQuestions] = useState<Question[]>([]);
   const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
 
@@ -394,57 +396,77 @@ export const BulkPasteParserModal: React.FC<BulkPasteParserModalProps> = ({
   };
 
   // Save all to database
-  const handleSaveToBank = () => {
-    if (parsedQuestions.length === 0) return;
+  const handleSaveToBank = async () => {
+    if (parsedQuestions.length === 0 || isSaving) return;
 
-    let targetSubjectId = selectedSubjectId;
-    const finalSubName = getEffectiveSubjectName();
+    setIsSaving(true);
 
-    if (isCustomSubject && customSubjectName.trim()) {
-      if (saveCustomSubject) {
-        const newSub = addSubject({
-          name_bn: customSubjectName.trim(),
-          name_ar: customSubjectName.trim(),
-          icon: "BookOpen",
-          question_count: parsedQuestions.length,
-          is_premium_only: false,
-          is_active: true,
-          topics: defaultTopic.trim() ? [defaultTopic.trim()] : ["সাধারণ"],
-          color_accent: "emerald",
-          order: subjects.length + 1,
-        });
-        targetSubjectId = newSub.id;
-      } else {
-        targetSubjectId = `sub-custom-${Date.now()}`;
+    try {
+      let targetSubjectId = selectedSubjectId;
+      const finalSubName = getEffectiveSubjectName();
+
+      if (isCustomSubject && customSubjectName.trim()) {
+        if (saveCustomSubject) {
+          const newSub = addSubject({
+            name_bn: customSubjectName.trim(),
+            name_ar: customSubjectName.trim(),
+            icon: "BookOpen",
+            question_count: parsedQuestions.length,
+            is_premium_only: false,
+            is_active: true,
+            topics: defaultTopic.trim() ? [defaultTopic.trim()] : ["সাধারণ"],
+            color_accent: "emerald",
+            order: subjects.length + 1,
+          });
+          targetSubjectId = newSub.id;
+        } else {
+          targetSubjectId = `sub-custom-${Date.now()}`;
+        }
       }
+
+      // Check if selected exam is Free Exam vs Course Exam
+      const targetExam = exams.find((e) => e.id === selectedExamId);
+      const isTargetFreeExam = Boolean(
+        targetExam?.is_free ||
+        targetExam?.exam_scope === "free" ||
+        !targetExam?.course_id
+      );
+
+      const readyQuestions: any[] = parsedQuestions.map((q) => ({
+        exam_id: isTargetFreeExam ? null : (selectedExamId || q.exam_id || null),
+        free_exam_id: isTargetFreeExam ? (selectedExamId || q.free_exam_id || null) : null,
+        subject_id: targetSubjectId,
+        subject_name: q.subject_name || finalSubName,
+        topic: q.topic || defaultTopic.trim() || "সাধারণ",
+        question: q.question,
+        question_text: q.question,
+        arabic_text: q.arabic_text || undefined,
+        option_a: q.options[0] || "",
+        option_b: q.options[1] || "",
+        option_c: q.options[2] || "",
+        option_d: q.options[3] || "",
+        options: q.options,
+        correct_index: q.correct_index,
+        correct_option: ["option_a", "option_b", "option_c", "option_d"][q.correct_index] || "option_a",
+        explanation: q.explanation || "",
+        source: q.source || (languageMode === "ar" ? "المناهج المعتمدة" : languageMode === "en" ? "Curriculum Reference" : "মাদ্রাসা পাঠ্যবই"),
+        difficulty: q.difficulty || "Medium",
+        exam_type: q.exam_type || "NTRCA",
+        language: q.language || languageMode,
+      }));
+
+      const res = await addBulkQuestions(readyQuestions);
+      setIsSaving(false);
+
+      if (res.success) {
+        setParsedQuestions([]);
+        onClose();
+      }
+    } catch (err: any) {
+      console.error("Bulk save error:", err);
+      showToast(`বাল্ক প্রশ্ন সংরক্ষণ ব্যর্থ হয়েছে: ${err?.message || "ত্রুটি"}`, "error");
+      setIsSaving(false);
     }
-
-    const readyQuestions: any[] = parsedQuestions.map((q) => ({
-      exam_id: selectedExamId || q.exam_id || undefined,
-      subject_id: targetSubjectId,
-      subject_name: q.subject_name || finalSubName,
-      topic: q.topic || defaultTopic.trim() || "সাধারণ",
-      question: q.question,
-      question_text: q.question,
-      arabic_text: q.arabic_text || undefined,
-      option_a: q.options[0] || "",
-      option_b: q.options[1] || "",
-      option_c: q.options[2] || "",
-      option_d: q.options[3] || "",
-      options: q.options,
-      correct_index: q.correct_index,
-      correct_option: ["option_a", "option_b", "option_c", "option_d"][q.correct_index] || "option_a",
-      explanation: q.explanation || "",
-      source: q.source || (languageMode === "ar" ? "المناهج المعتمدة" : languageMode === "en" ? "Curriculum Reference" : "মাদ্রাসা পাঠ্যবই"),
-      difficulty: q.difficulty || "Medium",
-      exam_type: q.exam_type || "NTRCA",
-      language: q.language || languageMode,
-    }));
-
-    addBulkQuestions(readyQuestions);
-    showToast(`${readyQuestions.length}টি প্রশ্ন সফলভাবে প্রশ্ন ব্যাংকে যুক্ত করা হয়েছে!`, "success");
-    setParsedQuestions([]);
-    onClose();
   };
 
   return (
@@ -760,10 +782,20 @@ export const BulkPasteParserModal: React.FC<BulkPasteParserModalProps> = ({
                 <button
                   type="button"
                   onClick={handleSaveToBank}
-                  className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 cursor-pointer flex items-center gap-1.5"
+                  disabled={isSaving}
+                  className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>সব প্রশ্ন ডাটাবেজে যুক্ত করুন</span>
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>ডাটাবেজে সেভ হচ্ছে...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>সব প্রশ্ন ডাটাবেজে যুক্ত করুন</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>

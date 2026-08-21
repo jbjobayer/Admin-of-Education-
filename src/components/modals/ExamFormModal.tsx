@@ -20,6 +20,7 @@ import {
   ListFilter,
   ChevronDown,
   ChevronUp,
+  Loader2,
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import {
@@ -68,6 +69,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
   const [totalMarks, setTotalMarks] = useState(20);
   const [negativeMarking, setNegativeMarking] = useState(0.25);
   const [status, setStatus] = useState<ExamStatus>("live");
+  const [isSaving, setIsSaving] = useState(false);
 
   // Selected Questions currently attached to this exam
   const [examQuestions, setExamQuestions] = useState<Question[]>([]);
@@ -610,8 +612,10 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
   // ----------------------------------------------------
   // Form Final Submit (Exam Create / Update)
   // ----------------------------------------------------
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
+
     if (!title.trim()) {
       showToast("দয়া করে পরীক্ষার শিরোনাম প্রদান করুন", "error");
       return;
@@ -633,77 +637,73 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       return;
     }
 
-    const now = new Date();
-    const startTime = now.toISOString();
-    const endTime = new Date(
-      now.getTime() + durationMinutes * 60000 * 24
-    ).toISOString();
+    setIsSaving(true);
 
-    const mappedExamType =
-      category === "daily_live"
-        ? "live_exam"
-        : category === "premium_ntrca"
-        ? "full_test"
-        : "model_test";
+    try {
+      const now = new Date();
+      const startTime = now.toISOString();
+      const endTime = new Date(
+        now.getTime() + durationMinutes * 60000 * 24
+      ).toISOString();
 
-    const calculatedTotalMarks = Number(totalMarks || examQuestions.length || 50);
-    const calculatedPassMarks = Math.round(calculatedTotalMarks * 0.4) || 20;
+      const mappedExamType =
+        category === "daily_live"
+          ? "live_exam"
+          : category === "premium_ntrca"
+          ? "full_test"
+          : "model_test";
 
-    const finalCourseId = isCourseExam ? selectedCourseId : null;
-    const isFree = !isCourseExam;
+      const calculatedTotalMarks = Number(totalMarks || examQuestions.length || 50);
+      const calculatedPassMarks = Math.round(calculatedTotalMarks * 0.4) || 20;
 
-    const examData = {
-      course_id: finalCourseId,
-      title: title.trim(),
-      description: syllabus.trim() || subject.trim() || title.trim(),
-      category: isCourseExam ? category : "free_test",
-      exam_type: mappedExamType,
-      subject: subject.trim(),
-      syllabus: syllabus.trim(),
-      duration_minutes: Number(durationMinutes),
-      total_questions: Number(examQuestions.length),
-      total_marks: calculatedTotalMarks,
-      negative_marking: Number(negativeMarking),
-      negative_mark: Number(negativeMarking),
-      pass_marks: calculatedPassMarks,
-      pass_mark: calculatedPassMarks,
-      start_time: startTime,
-      end_time: endTime,
-      exam_date: startTime,
-      is_free: isFree,
-      is_published: true,
-      sort_order: 0,
-      status,
-      participant_count: examToEdit ? examToEdit.participant_count : 0,
-      result_published: examToEdit ? examToEdit.result_published : false,
-      questions: examQuestions.map((q) => ({
-        ...q,
-        exam_id: isCourseExam ? (examToEdit?.id || q.exam_id) : null,
-        free_exam_id: !isCourseExam ? (examToEdit?.id || q.free_exam_id || q.exam_id) : null,
-      })),
-      table_type: isCourseExam ? "course_exams" : "free_exams",
-    };
+      const finalCourseId = isCourseExam ? selectedCourseId : null;
+      const isFree = !isCourseExam;
 
-    if (examToEdit) {
-      updateExam(examToEdit.id, examData);
-    } else {
-      addExam(examData);
+      const examData = {
+        course_id: finalCourseId,
+        title: title.trim(),
+        description: syllabus.trim() || subject.trim() || title.trim(),
+        category: isCourseExam ? category : "free_test",
+        exam_type: mappedExamType,
+        subject: subject.trim(),
+        syllabus: syllabus.trim(),
+        duration_minutes: Number(durationMinutes),
+        total_questions: Number(examQuestions.length),
+        total_marks: calculatedTotalMarks,
+        negative_marking: Number(negativeMarking),
+        negative_mark: Number(negativeMarking),
+        pass_marks: calculatedPassMarks,
+        pass_mark: calculatedPassMarks,
+        start_time: startTime,
+        end_time: endTime,
+        exam_date: startTime,
+        is_free: isFree,
+        is_published: true,
+        sort_order: 0,
+        status,
+        participant_count: examToEdit ? examToEdit.participant_count : 0,
+        result_published: examToEdit ? examToEdit.result_published : false,
+        questions: examQuestions.map((q) => ({
+          ...q,
+          exam_id: isCourseExam ? (examToEdit?.id || q.exam_id) : undefined,
+          free_exam_id: !isCourseExam ? (examToEdit?.id || q.free_exam_id || q.exam_id) : undefined,
+        })),
+        table_type: isCourseExam ? "course_exams" : "free_exams",
+      };
+
+      if (examToEdit) {
+        updateExam(examToEdit.id, examData);
+      } else {
+        addExam(examData);
+      }
+
+      onClose();
+    } catch (err: any) {
+      console.error("Error submitting exam:", err);
+      showToast("পরীক্ষা সংরক্ষণ করতে সমস্যা হয়েছে।", "error");
+    } finally {
+      setIsSaving(false);
     }
-
-    // Ensure all questions attached to this exam are also added to the central Question Bank if not already present
-    const existingIds = new Set(questions.map((q) => q.id));
-    const newQuestionsForBank = examQuestions
-      .filter((q) => !existingIds.has(q.id))
-      .map((q) => ({
-        ...q,
-        exam_id: isCourseExam ? (examToEdit?.id || q.exam_id) : null,
-        free_exam_id: !isCourseExam ? (examToEdit?.id || q.free_exam_id || q.exam_id) : null,
-      }));
-    if (newQuestionsForBank.length > 0) {
-      addBulkQuestions(newQuestionsForBank);
-    }
-
-    onClose();
   };
 
   // Harakat Toolbar items
@@ -1752,9 +1752,11 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer shadow-md shadow-emerald-600/20"
+                disabled={isSaving}
+                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold cursor-pointer shadow-md shadow-emerald-600/20 flex items-center gap-2"
               >
-                {examToEdit ? "মডেল টেস্ট আপডেট করুন" : "মডেল টেস্ট প্রকাশ করুন"}
+                {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                <span>{examToEdit ? "মডেল টেস্ট আপডেট করুন" : "মডেল টেস্ট প্রকাশ করুন"}</span>
               </button>
             </div>
           </div>

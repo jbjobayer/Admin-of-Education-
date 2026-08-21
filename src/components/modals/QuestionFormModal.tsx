@@ -13,6 +13,8 @@ import {
   HelpCircle,
   Tag,
   RotateCcw,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import { Question, QuestionDifficulty, ExamTargetCategory } from "../../types";
@@ -80,11 +82,16 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
   const [difficulty, setDifficulty] = useState<QuestionDifficulty>("Medium");
   const [examType, setExamType] = useState<ExamTargetCategory>("NTRCA");
 
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   // Initialize or reset form
   useEffect(() => {
+    setSaveError(null);
+    setIsSaving(false);
     if (questionToEdit) {
       setLanguage((questionToEdit.language as LanguageMode) || "bn");
-      setExamId(questionToEdit.exam_id || initialExamId || (exams[0]?.id || ""));
+      setExamId(questionToEdit.free_exam_id || questionToEdit.exam_id || initialExamId || (exams[0]?.id || ""));
 
       // Check if subject exists in subjects list
       const existingSub = subjects.find((s) => s.id === questionToEdit.subject_id);
@@ -192,8 +199,9 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSaveError(null);
 
     // 1. Validate exam selection
     if (!examId || !isValidUuid(examId)) {
@@ -202,7 +210,11 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
     }
 
     const targetExam = exams.find((e) => e.id === examId);
-    const isTargetFreeExam = Boolean(targetExam?.is_free || !targetExam?.course_id);
+    const isTargetFreeExam = Boolean(
+      targetExam?.is_free ||
+      targetExam?.exam_scope === "free" ||
+      !targetExam?.course_id
+    );
 
     // 2. Validate question text
     if (!questionText.trim()) {
@@ -217,82 +229,105 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
       return;
     }
 
-    // Determine Subject ID & Subject Name
-    let finalSubjectId = selectedSubjectId;
-    let finalSubjectName = currentSubject?.name_bn || "সাধারণ বিষয়";
+    setIsSaving(true);
 
-    if (isCustomSubject) {
-      const customName = customSubjectNameBn.trim();
-      if (!customName) {
-        showToast("দয়া করে বিষয়ের নাম ম্যানুয়ালি লিখুন অথবা তালিকা থেকে বিষয় বাছাই করুন", "error");
-        return;
+    try {
+      // Determine Subject ID & Subject Name
+      let finalSubjectId = selectedSubjectId;
+      let finalSubjectName = currentSubject?.name_bn || "সাধারণ বিষয়";
+
+      if (isCustomSubject) {
+        const customName = customSubjectNameBn.trim();
+        if (!customName) {
+          showToast("দয়া করে বিষয়ের নাম ম্যানুয়ালি লিখুন অথবা তালিকা থেকে বিষয় বাছাই করুন", "error");
+          setIsSaving(false);
+          return;
+        }
+        finalSubjectName = customName;
+
+        // If user opted to save to Subject Hub permanently
+        if (saveCustomSubjectPermanently) {
+          const createdSub = addSubject({
+            name_bn: customName,
+            name_ar: customSubjectNameAr.trim() || customName,
+            icon: "BookOpen",
+            question_count: 1,
+            is_premium_only: false,
+            is_active: true,
+            topics: topic.trim() ? [topic.trim()] : ["সাধারণ"],
+            color_accent: "emerald",
+            order: subjects.length + 1,
+          });
+          finalSubjectId = createdSub.id;
+        } else {
+          finalSubjectId = `sub-custom-${Date.now()}`;
+        }
       }
-      finalSubjectName = customName;
 
-      // If user opted to save to Subject Hub permanently
-      if (saveCustomSubjectPermanently) {
-        const createdSub = addSubject({
-          name_bn: customName,
-          name_ar: customSubjectNameAr.trim() || customName,
-          icon: "BookOpen",
-          question_count: 1,
-          is_premium_only: false,
-          is_active: true,
-          topics: topic.trim() ? [topic.trim()] : ["সাধারণ"],
-          color_accent: "emerald",
-          order: subjects.length + 1,
-        });
-        finalSubjectId = createdSub.id;
+      const optMap: Record<number, string> = {
+        0: "option_a",
+        1: "option_b",
+        2: "option_c",
+        3: "option_d",
+      };
+
+      // Strict payload mapping based on exam type:
+      // Course Exam: exam_id = examId, free_exam_id = null
+      // Free Exam / Model Test: exam_id = null, free_exam_id = examId
+      const qData: any = {
+        exam_id: isTargetFreeExam ? null : examId,
+        free_exam_id: isTargetFreeExam ? examId : null,
+        subject_id: finalSubjectId,
+        subject_name: finalSubjectName,
+        topic: topic.trim() || "সাধারণ",
+        question: questionText.trim(),
+        question_text: questionText.trim(),
+        arabic_text: arabicText.trim() || undefined,
+        option_a: validOptions[0],
+        option_b: validOptions[1],
+        option_c: validOptions[2],
+        option_d: validOptions[3],
+        options: validOptions,
+        correct_index: correctIndex < validOptions.length ? correctIndex : 0,
+        correct_option: optMap[correctIndex] || "option_a",
+        explanation: explanation.trim(),
+        source:
+          source.trim() ||
+          (language === "ar"
+            ? "المناهج المعتمدة"
+            : language === "en"
+            ? "Curriculum Reference"
+            : "মাদ্রাসা পাঠ্যবই ও রেফারেন্স"),
+        difficulty,
+        exam_type: examType,
+        language,
+        marks: 1,
+        negative_marks: 0.25,
+      };
+
+      if (questionToEdit) {
+        const res = await updateQuestion(questionToEdit.id, qData);
+        if (!res.success) {
+          setSaveError(`আপডেট ব্যর্থ হয়েছে: ${res.error || "অজানা ত্রুটি"}`);
+          setIsSaving(false);
+          return;
+        }
       } else {
-        finalSubjectId = `sub-custom-${Date.now()}`;
+        const res = await addQuestion(qData);
+        if (!res.success) {
+          setSaveError(`সংরক্ষণ ব্যর্থ হয়েছে: ${res.error || "অজানা ত্রুটি"}`);
+          setIsSaving(false);
+          return;
+        }
       }
+
+      setIsSaving(false);
+      onClose();
+    } catch (err: any) {
+      console.error("Save question error:", err);
+      setSaveError(err?.message || "প্রশ্ন সংরক্ষণে ত্রুটি ঘটেছে।");
+      setIsSaving(false);
     }
-
-    const optMap: Record<number, string> = {
-      0: "option_a",
-      1: "option_b",
-      2: "option_c",
-      3: "option_d",
-    };
-
-    const qData: any = {
-      exam_id: isTargetFreeExam ? null : examId,
-      free_exam_id: isTargetFreeExam ? examId : null,
-      subject_id: finalSubjectId,
-      subject_name: finalSubjectName,
-      topic: topic.trim() || "সাধারণ",
-      question: questionText.trim(),
-      question_text: questionText.trim(),
-      arabic_text: arabicText.trim() || undefined,
-      option_a: validOptions[0],
-      option_b: validOptions[1],
-      option_c: validOptions[2],
-      option_d: validOptions[3],
-      options: validOptions,
-      correct_index: correctIndex < validOptions.length ? correctIndex : 0,
-      correct_option: optMap[correctIndex] || "option_a",
-      explanation: explanation.trim(),
-      source:
-        source.trim() ||
-        (language === "ar"
-          ? "المناهج المعتمدة"
-          : language === "en"
-          ? "Curriculum Reference"
-          : "মাদ্রাসা পাঠ্যবই ও রেফারেন্স"),
-      difficulty,
-      exam_type: examType,
-      language,
-      marks: 1,
-      negative_marks: 0.25,
-    };
-
-    if (questionToEdit) {
-      updateQuestion(questionToEdit.id, qData);
-    } else {
-      addQuestion(qData);
-    }
-
-    onClose();
   };
 
   return (
@@ -312,11 +347,22 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
 
           <button
             onClick={onClose}
-            className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+            disabled={isSaving}
+            className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors disabled:opacity-50"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {saveError && (
+          <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-2xl flex items-start gap-2.5 text-rose-700 dark:text-rose-300 text-xs animate-in fade-in">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-bold">Supabase সংরক্ষণ ব্যর্থ হয়েছে:</span>
+              <p className="mt-0.5">{saveError}</p>
+            </div>
+          </div>
+        )}
 
         {/* Language & Option Style Selector Bar */}
         <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
@@ -826,16 +872,27 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              disabled={isSaving}
+              className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
             >
               বাতিল
             </button>
             <button
               type="submit"
-              className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer shadow-md shadow-emerald-600/20 transition-all flex items-center gap-1.5"
+              disabled={isSaving}
+              className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer shadow-md shadow-emerald-600/20 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{questionToEdit ? "আপডেট করুন" : "প্রশ্ন ব্যাংকে সংরক্ষণ করুন"}</span>
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Supabase-এ সেভ হচ্ছে...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{questionToEdit ? "আপডেট করুন" : "প্রশ্ন ব্যাংকে সংরক্ষণ করুন"}</span>
+                </>
+              )}
             </button>
           </div>
         </form>

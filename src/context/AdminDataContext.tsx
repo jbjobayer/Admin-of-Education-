@@ -106,10 +106,10 @@ interface AdminDataContextType {
   appSettings: AppSettings;
 
   // Question CRUD (questions table)
-  addQuestion: (q: Omit<Question, "id" | "created_at">) => Question;
-  addBulkQuestions: (qs: Omit<Question, "id" | "created_at">[]) => number;
-  updateQuestion: (id: string, q: Partial<Question>) => void;
-  deleteQuestion: (id: string) => void;
+  addQuestion: (q: Omit<Question, "id" | "created_at">) => Promise<{ success: boolean; data?: Question; error?: string }>;
+  addBulkQuestions: (qs: Omit<Question, "id" | "created_at">[]) => Promise<{ success: boolean; data?: Question[]; count: number; error?: string }>;
+  updateQuestion: (id: string, q: Partial<Question>) => Promise<{ success: boolean; data?: Question; error?: string }>;
+  deleteQuestion: (id: string) => Promise<{ success: boolean; error?: string }>;
 
   // Exam CRUD (exams table)
   addExam: (exam: Omit<Exam, "id" | "created_at" | "participant_count">) => Exam;
@@ -371,19 +371,18 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (coursesRes.data && coursesRes.data.length > 0) {
         setCourses(coursesRes.data);
       }
-      if (examsRes.data && examsRes.data.length > 0) {
-        setExams(examsRes.data);
-      }
+
+      // Merge questions from DB and preserve any unsynced local questions
+      let allMergedQuestions: Question[] = [];
       if (questionsRes.data) {
         setQuestions((prevLocal) => {
           if (questionsRes.data!.length === 0) {
-            // Never wipe local questions if Supabase returned 0 items
+            allMergedQuestions = prevLocal;
             return prevLocal;
           }
           const dbIds = new Set(questionsRes.data!.map((q) => q.id));
           const dbTexts = new Set(questionsRes.data!.map((q) => (q.question_text || q.question || "").trim().toLowerCase()));
 
-          // Keep any unsynced local questions (e.g. temporary IDs not yet in DB)
           const localUnsynced = prevLocal.filter((local) => {
             if (!isValidUuid(local.id)) {
               const text = (local.question_text || local.question || "").trim().toLowerCase();
@@ -392,7 +391,34 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return !dbIds.has(local.id);
           });
 
-          return [...questionsRes.data!, ...localUnsynced];
+          allMergedQuestions = [...questionsRes.data!, ...localUnsynced];
+          return allMergedQuestions;
+        });
+      }
+
+      // Re-hydrate exams ensuring every exam has its linked questions intact
+      if (examsRes.data && examsRes.data.length > 0) {
+        setExams((prevExams) => {
+          return examsRes.data!.map((exam) => {
+            const linkedFromQuestions = allMergedQuestions.filter(
+              (q) => q.exam_id === exam.id || q.free_exam_id === exam.id
+            );
+            const prevExam = prevExams.find((e) => e.id === exam.id);
+            const prevQs = prevExam?.questions || [];
+
+            const finalQuestions = linkedFromQuestions.length > 0
+              ? linkedFromQuestions
+              : (exam.questions && exam.questions.length > 0)
+              ? exam.questions
+              : prevQs;
+
+            return {
+              ...exam,
+              questions: finalQuestions,
+              total_questions: finalQuestions.length || exam.total_questions || 0,
+              total_marks: finalQuestions.length > 0 ? finalQuestions.length : exam.total_marks,
+            };
+          });
         });
       }
       if (enrollmentsRes.data && enrollmentsRes.data.length > 0) {
@@ -509,7 +535,9 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // -------------------------------------------------------------
   // Question CRUD (questions table)
   // -------------------------------------------------------------
-  const addQuestion = (q: Omit<Question, "id" | "created_at">): Question => {
+  const addQuestion = async (
+    q: Omit<Question, "id" | "created_at">
+  ): Promise<{ success: boolean; data?: Question; error?: string }> => {
     const tempId = `q-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const optA = (q.option_a || (q.options ? q.options[0] : "") || "").trim();
     const optB = (q.option_b || (q.options ? q.options[1] : "") || "").trim();
@@ -565,61 +593,63 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       );
     }
 
-    // Direct Supabase Insert
-    dbCreateQuestion(q)
-      .then((res) => {
-        if (res.error) {
-          console.error("❌ Supabase Question Insert Error:", res.error, res.errorObj);
-          showToast(`প্রশ্ন সংরক্ষণ করা যায়নি: ${res.error}`, "error");
-          // Revert optimistic insert
-          setQuestions((prev) => prev.filter((item) => item.id !== tempId));
-          if (targetExamId) {
-            setExams((prev) =>
-              prev.map((e) => {
-                if (e.id === targetExamId) {
-                  const currentQs = Array.isArray(e.questions) ? e.questions : [];
-                  return {
-                    ...e,
-                    questions: currentQs.filter((item) => item.id !== tempId),
-                    total_questions: Math.max(0, currentQs.length - 1),
-                  };
-                }
-                return e;
-              })
-            );
-          }
-        } else if (res.data) {
-          console.log("✅ Question successfully inserted into Supabase public.questions:", res.data);
-          const realItem = res.data;
-          // Replace tempId with actual DB UUID
-          setQuestions((prev) => prev.map((item) => (item.id === tempId ? realItem : item)));
-          if (targetExamId) {
-            setExams((prev) =>
-              prev.map((e) => {
-                if (e.id === targetExamId) {
-                  const currentQs = Array.isArray(e.questions) ? e.questions : [];
-                  return {
-                    ...e,
-                    questions: currentQs.map((item) => (item.id === tempId ? realItem : item)),
-                  };
-                }
-                return e;
-              })
-            );
-          }
-          showToast("প্রশ্ন সফলভাবে সংরক্ষণ হয়েছে।", "success");
-        }
-      })
-      .catch((err) => {
-        console.error("❌ Unexpected Error creating question:", err);
-        showToast(`প্রশ্ন সংরক্ষণ করা যায়নি: ${err?.message || "ব্যর্থ হয়েছে"}`, "error");
+    try {
+      // Direct Supabase Insert
+      const res = await dbCreateQuestion(q);
+      if (res.error || !res.data) {
+        console.error("❌ Supabase Question Insert Error:", res.error, res.errorObj);
+        showToast(`প্রশ্ন সংরক্ষণ করা যায়নি: ${res.error}`, "error");
+        // Revert optimistic insert
         setQuestions((prev) => prev.filter((item) => item.id !== tempId));
-      });
+        if (targetExamId) {
+          setExams((prev) =>
+            prev.map((e) => {
+              if (e.id === targetExamId) {
+                const currentQs = Array.isArray(e.questions) ? e.questions : [];
+                return {
+                  ...e,
+                  questions: currentQs.filter((item) => item.id !== tempId),
+                  total_questions: Math.max(0, currentQs.length - 1),
+                };
+              }
+              return e;
+            })
+          );
+        }
+        return { success: false, error: res.error || "সংরক্ষণ ব্যর্থ হয়েছে" };
+      }
 
-    return newQuestion;
+      console.log("✅ Question successfully inserted into Supabase public.questions:", res.data);
+      const realItem = res.data;
+      // Replace tempId with actual DB UUID
+      setQuestions((prev) => prev.map((item) => (item.id === tempId ? realItem : item)));
+      if (targetExamId) {
+        setExams((prev) =>
+          prev.map((e) => {
+            if (e.id === targetExamId) {
+              const currentQs = Array.isArray(e.questions) ? e.questions : [];
+              return {
+                ...e,
+                questions: currentQs.map((item) => (item.id === tempId ? realItem : item)),
+              };
+            }
+            return e;
+          })
+        );
+      }
+      showToast("প্রশ্ন সফলভাবে Supabase-এ সংরক্ষণ হয়েছে।", "success");
+      return { success: true, data: realItem };
+    } catch (err: any) {
+      console.error("❌ Unexpected Error creating question:", err);
+      showToast(`প্রশ্ন সংরক্ষণ করা যায়নি: ${err?.message || "ব্যর্থ হয়েছে"}`, "error");
+      setQuestions((prev) => prev.filter((item) => item.id !== tempId));
+      return { success: false, error: err?.message || "ব্যর্থ হয়েছে" };
+    }
   };
 
-  const addBulkQuestions = (qs: Omit<Question, "id" | "created_at">[]): number => {
+  const addBulkQuestions = async (
+    qs: Omit<Question, "id" | "created_at">[]
+  ): Promise<{ success: boolean; data?: Question[]; count: number; error?: string }> => {
     const tempPrefix = `q-bulk-${Date.now()}-`;
     const newItems: Question[] = qs.map((q, idx) => {
       const optA = (q.option_a || (q.options ? q.options[0] : "") || "").trim();
@@ -653,35 +683,37 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     setQuestions((prev) => [...newItems, ...prev]);
 
-    // Asynchronous Bulk Insert to Supabase
-    dbCreateBulkQuestions(qs)
-      .then((res) => {
-        if (res.error) {
-          console.error("❌ Supabase Bulk Insert Error:", res.error, res.errorObj);
-          showToast(`বাল্ক প্রশ্ন সংরক্ষণ করা যায়নি: ${res.error}`, "error");
-          const tempIds = new Set(newItems.map((n) => n.id));
-          setQuestions((prev) => prev.filter((p) => !tempIds.has(p.id)));
-        } else if (res.data && res.data.length > 0) {
-          console.log(`✅ ${res.data.length} questions bulk inserted into Supabase public.questions`);
-          setQuestions((prev) => {
-            const tempIds = new Set(newItems.map((n) => n.id));
-            const remaining = prev.filter((p) => !tempIds.has(p.id));
-            return [...res.data!, ...remaining];
-          });
-          showToast(`${res.data.length}টি প্রশ্ন সফলভাবে সংরক্ষণ হয়েছে।`, "success");
-        }
-      })
-      .catch((err) => {
-        console.error("❌ Unexpected Error bulk creating questions:", err);
-        showToast(`বাল্ক প্রশ্ন সংরক্ষণ করা যায়নি: ${err?.message || "ব্যর্থ হয়েছে"}`, "error");
+    try {
+      const res = await dbCreateBulkQuestions(qs);
+      if (res.error || !res.data) {
+        console.error("❌ Supabase Bulk Insert Error:", res.error, res.errorObj);
+        showToast(`বাল্ক প্রশ্ন সংরক্ষণ করা যায়নি: ${res.error}`, "error");
         const tempIds = new Set(newItems.map((n) => n.id));
         setQuestions((prev) => prev.filter((p) => !tempIds.has(p.id)));
-      });
+        return { success: false, count: 0, error: res.error || "বাল্ক সংরক্ষণ ব্যর্থ" };
+      }
 
-    return newItems.length;
+      console.log(`✅ ${res.data.length} questions bulk inserted into Supabase public.questions`);
+      setQuestions((prev) => {
+        const tempIds = new Set(newItems.map((n) => n.id));
+        const remaining = prev.filter((p) => !tempIds.has(p.id));
+        return [...res.data!, ...remaining];
+      });
+      showToast(`${res.data.length}টি প্রশ্ন সফলভাবে Supabase-এ সংরক্ষণ হয়েছে।`, "success");
+      return { success: true, data: res.data, count: res.data.length };
+    } catch (err: any) {
+      console.error("❌ Unexpected Error bulk creating questions:", err);
+      showToast(`বাল্ক প্রশ্ন সংরক্ষণ করা যায়নি: ${err?.message || "ব্যর্থ হয়েছে"}`, "error");
+      const tempIds = new Set(newItems.map((n) => n.id));
+      setQuestions((prev) => prev.filter((p) => !tempIds.has(p.id)));
+      return { success: false, count: 0, error: err?.message || "ব্যর্থ হয়েছে" };
+    }
   };
 
-  const updateQuestion = (id: string, q: Partial<Question>) => {
+  const updateQuestion = async (
+    id: string,
+    q: Partial<Question>
+  ): Promise<{ success: boolean; data?: Question; error?: string }> => {
     setQuestions((prev) =>
       prev.map((item) => {
         if (item.id === id) {
@@ -703,45 +735,47 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       })
     );
 
-    // Asynchronous Supabase update
-    dbUpdateQuestion(id, q)
-      .then((res) => {
-        if (res.error) {
-          console.error("❌ Supabase Question Update Error:", res.error, res.errorObj);
-          showToast(`প্রশ্ন আপডেট করা যায়নি: ${res.error}`, "error");
-        } else if (res.data) {
-          console.log("✅ Question updated in Supabase:", res.data);
-          setQuestions((prev) => prev.map((item) => (item.id === id ? res.data! : item)));
-          showToast("প্রশ্ন সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!", "success");
-        }
-      })
-      .catch((err) => {
-        console.error("❌ Error updating question:", err);
-        showToast(`প্রশ্ন আপডেট করা যায়নি: ${err?.message || "ব্যর্থ হয়েছে"}`, "error");
-      });
+    try {
+      const res = await dbUpdateQuestion(id, q);
+      if (res.error || !res.data) {
+        console.error("❌ Supabase Question Update Error:", res.error, res.errorObj);
+        showToast(`প্রশ্ন আপডেট করা যায়নি: ${res.error}`, "error");
+        return { success: false, error: res.error || "আপডেট ব্যর্থ" };
+      }
+
+      console.log("✅ Question updated in Supabase:", res.data);
+      setQuestions((prev) => prev.map((item) => (item.id === id ? res.data! : item)));
+      showToast("প্রশ্ন সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!", "success");
+      return { success: true, data: res.data };
+    } catch (err: any) {
+      console.error("❌ Error updating question:", err);
+      showToast(`প্রশ্ন আপডেট করা যায়নি: ${err?.message || "ব্যর্থ হয়েছে"}`, "error");
+      return { success: false, error: err?.message || "ব্যর্থ হয়েছে" };
+    }
   };
 
-  const deleteQuestion = (id: string) => {
+  const deleteQuestion = async (id: string): Promise<{ success: boolean; error?: string }> => {
     const previousQuestions = [...questions];
     setQuestions((prev) => prev.filter((item) => item.id !== id));
 
-    // Asynchronous Supabase delete
-    dbDeleteQuestion(id)
-      .then((res) => {
-        if (res.error) {
-          console.error("❌ Supabase Question Delete Error:", res.error, res.errorObj);
-          showToast(`প্রশ্ন মুছে ফেলা যায়নি: ${res.error}`, "error");
-          setQuestions(previousQuestions);
-        } else {
-          console.log(`✅ Question ${id} deleted from Supabase`);
-          showToast("প্রশ্নটি সফলভাবে মুছে ফেলা হয়েছে!", "info");
-        }
-      })
-      .catch((err) => {
-        console.error("❌ Error deleting question:", err);
-        showToast(`প্রশ্ন মুছে ফেলা যায়নি: ${err?.message || "ব্যর্থ হয়েছে"}`, "error");
+    try {
+      const res = await dbDeleteQuestion(id);
+      if (res.error) {
+        console.error("❌ Supabase Question Delete Error:", res.error, res.errorObj);
+        showToast(`প্রশ্ন মুছে ফেলা যায়নি: ${res.error}`, "error");
         setQuestions(previousQuestions);
-      });
+        return { success: false, error: res.error };
+      }
+
+      console.log(`✅ Question ${id} deleted from Supabase`);
+      showToast("প্রশ্নটি সফলভাবে মুছে ফেলা হয়েছে!", "info");
+      return { success: true };
+    } catch (err: any) {
+      console.error("❌ Error deleting question:", err);
+      showToast(`প্রশ্ন মুছে ফেলা যায়নি: ${err?.message || "ব্যর্থ হয়েছে"}`, "error");
+      setQuestions(previousQuestions);
+      return { success: false, error: err?.message || "ব্যর্থ হয়েছে" };
+    }
   };
 
   // -------------------------------------------------------------
@@ -756,9 +790,30 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       created_at: new Date().toISOString(),
       status: exam.status || "upcoming",
       is_published: exam.is_published !== undefined ? exam.is_published : true,
+      questions: exam.questions || [],
+      total_questions: exam.questions ? exam.questions.length : (exam.total_questions || 0),
     };
     // Optimistic UI state update
     setExams((prev) => [newExam, ...prev]);
+
+    // If exam has questions, optimistically associate questions in local state
+    if (exam.questions && exam.questions.length > 0) {
+      const isFree = Boolean(exam.is_free || exam.exam_scope === "free" || !exam.course_id);
+      const qIds = new Set(exam.questions.map((q) => q.id));
+      setQuestions((prev) =>
+        prev.map((q) => {
+          if (qIds.has(q.id)) {
+            return {
+              ...q,
+              exam_id: isFree ? undefined : tempId,
+              free_exam_id: isFree ? tempId : undefined,
+              exam_scope: isFree ? ("free" as const) : ("course" as const),
+            };
+          }
+          return q;
+        })
+      );
+    }
 
     // Asynchronous Supabase Insert
     dbCreateExam(exam)
@@ -766,7 +821,27 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (res.error) {
           handleSupabaseNotice(res, "পরীক্ষা");
         } else if (res.data) {
-          setExams((prev) => prev.map((e) => (e.id === tempId ? res.data! : e)));
+          const realExam = res.data;
+          setExams((prev) => prev.map((e) => (e.id === tempId ? realExam : e)));
+
+          // Update question associations from tempId to realExam.id
+          if (realExam.id) {
+            const isFree = Boolean(realExam.is_free || realExam.exam_scope === "free" || !realExam.course_id);
+            setQuestions((prev) =>
+              prev.map((q) => {
+                if (q.exam_id === tempId || q.free_exam_id === tempId) {
+                  return {
+                    ...q,
+                    exam_id: isFree ? undefined : realExam.id,
+                    free_exam_id: isFree ? realExam.id : undefined,
+                    exam_scope: isFree ? ("free" as const) : ("course" as const),
+                  };
+                }
+                return q;
+              })
+            );
+          }
+
           showToast("নতুন পরীক্ষা সফলভাবে তৈরি ও Supabase ক্লাউডে সিঙ্ক হয়েছে!", "success");
         }
       })
@@ -778,7 +853,40 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const updateExam = (id: string, exam: Partial<Exam>) => {
-    setExams((prev) => prev.map((e) => (e.id === id ? { ...e, ...exam } : e)));
+    setExams((prev) =>
+      prev.map((e) => {
+        if (e.id === id) {
+          const updatedQs = exam.questions !== undefined ? exam.questions : e.questions;
+          return {
+            ...e,
+            ...exam,
+            questions: updatedQs,
+            total_questions: updatedQs ? updatedQs.length : (exam.total_questions ?? e.total_questions),
+          };
+        }
+        return e;
+      })
+    );
+
+    // Optimistically update questions list if questions are passed
+    if (exam.questions && Array.isArray(exam.questions)) {
+      const isFree = Boolean(exam.is_free || exam.exam_scope === "free" || (!exam.course_id && exam.category === "free_test"));
+      const assignedIds = new Set(exam.questions.map((q) => q.id));
+
+      setQuestions((prev) =>
+        prev.map((q) => {
+          if (assignedIds.has(q.id)) {
+            return {
+              ...q,
+              exam_id: isFree ? undefined : id,
+              free_exam_id: isFree ? id : undefined,
+              exam_scope: isFree ? ("free" as const) : ("course" as const),
+            };
+          }
+          return q;
+        })
+      );
+    }
 
     dbUpdateExam(id, exam)
       .then((res) => {
