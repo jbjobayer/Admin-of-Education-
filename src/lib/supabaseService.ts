@@ -680,29 +680,52 @@ export async function dbFetchCourseExams(courseId?: string): Promise<ServiceResu
   }
 }
 
-export function normalizeCorrectOption(q: any): string {
-  if (q.correct_index !== undefined && q.correct_index !== null) {
+export function getQuestionCorrectIndex(q: any): number {
+  if (q.correct_index !== undefined && q.correct_index !== null && q.correct_index !== "") {
     const idx = Number(q.correct_index);
-    if (idx === 1) return "option_b";
-    if (idx === 2) return "option_c";
-    if (idx === 3) return "option_d";
-    return "option_a";
+    if (!isNaN(idx) && idx >= 0 && idx <= 3) return idx;
   }
   const raw = String(q.correct_option || "").toLowerCase().trim();
-  if (raw === "option_b" || raw === "b" || raw === "খ" || raw === "1" || raw === "১") return "option_b";
-  if (raw === "option_c" || raw === "c" || raw === "গ" || raw === "2" || raw === "২") return "option_c";
-  if (raw === "option_d" || raw === "d" || raw === "ঘ" || raw === "3" || raw === "৩") return "option_d";
-  return "option_a";
+  if (raw === "option_b" || raw === "opt_b" || raw === "b" || raw === "খ" || raw === "২" || raw === "1") return 1;
+  if (raw === "option_c" || raw === "opt_c" || raw === "c" || raw === "গ" || raw === "৩" || raw === "2") return 2;
+  if (raw === "option_d" || raw === "opt_d" || raw === "d" || raw === "ঘ" || raw === "৪" || raw === "3") return 3;
+  return 0;
 }
+
+export function normalizeCorrectOption(q: any): string {
+  const idx = getQuestionCorrectIndex(q);
+  const options = ["option_a", "option_b", "option_c", "option_d"];
+  return options[idx];
+}
+
+const CORRECT_OPTION_FORMAT_CANDIDATES = [
+  // 1. Standard single lowercase letter (most common in strict schemas: 'a', 'b', 'c', 'd')
+  ["a", "b", "c", "d"],
+  // 2. Full option string ('option_a', 'option_b', 'option_c', 'option_d')
+  ["option_a", "option_b", "option_c", "option_d"],
+  // 3. Standard single uppercase letter ('A', 'B', 'C', 'D')
+  ["A", "B", "C", "D"],
+  // 4. 1-based index numbers ('1', '2', '3', '4')
+  ["1", "2", "3", "4"],
+  // 5. Short option name ('opt_a', 'opt_b', 'opt_c', 'opt_d')
+  ["opt_a", "opt_b", "opt_c", "opt_d"],
+  // 6. Bengali alphabet ('ক', 'খ', 'গ', 'ঘ')
+  ["ক", "খ", "গ", "ঘ"],
+  // 7. 0-based index numbers ('0', '1', '2', '3')
+  ["0", "1", "2", "3"],
+  // 8. Numbered option ('option1', 'option2', 'option3', 'option4')
+  ["option1", "option2", "option3", "option4"],
+];
 
 /**
  * Standard Batch Question Insertion for Exams
- * Inserts questions into public.questions using the exact created exam UUID as exam_id.
- * Includes detailed console logs before and after insertion as requested.
+ * Inserts questions into public.questions using the exact created exam UUID.
+ * Supports isFree toggle (free_exam_id vs exam_id), multi-format check constraint retries, and column resilience.
  */
 export async function dbInsertExamQuestions(
   examId: string,
-  rawQuestions: (Partial<Question> | any)[]
+  rawQuestions: (Partial<Question> | any)[],
+  isFree: boolean = false
 ): Promise<ServiceResult<Question[]>> {
   const supabase = getSupabaseClient();
   if (!supabase) {
@@ -719,131 +742,208 @@ export async function dbInsertExamQuestions(
     return { data: [], error: null };
   }
 
-  // 1. Log START
   console.log("QUESTION INSERT START", {
-    examId: examId,
+    examId,
+    isFree,
     questionCount: rawQuestions.length,
     questions: rawQuestions,
   });
 
-  // 2. Prepare payload matching public.questions schema
-  const questionPayload = rawQuestions.map((q, idx) => {
+  // Prepare normalized base structures
+  const baseItems = rawQuestions.map((q, idx) => {
     const qText = (q.question_text || q.question || "").trim();
     const optA = (q.option_a || (q.options ? q.options[0] : "") || "ক").trim();
     const optB = (q.option_b || (q.options ? q.options[1] : "") || "খ").trim();
     const optC = (q.option_c || (q.options ? q.options[2] : "") || "গ").trim();
     const optD = (q.option_d || (q.options ? q.options[3] : "") || "ঘ").trim();
-    const correctOpt = normalizeCorrectOption(q);
+    const correctIdx = getQuestionCorrectIndex(q);
 
-    const row: any = {
-      exam_id: examId,
+    return {
       question_number: Number(q.question_number || idx + 1),
       question_text: qText || `প্রশ্ন ${idx + 1}`,
       option_a: optA,
       option_b: optB,
       option_c: optC,
       option_d: optD,
-      correct_option: correctOpt,
+      correctIdx,
       explanation: (q.explanation || "").trim(),
       marks: Number(q.marks ?? 1.0),
       negative_marks: Number(q.negative_marks ?? 0.25),
       sort_order: Number(q.sort_order ?? idx),
+      arabic_text: q.arabic_text ? q.arabic_text.trim() : null,
+      source: q.source ? q.source.trim() : null,
+      image_url: q.image_url ? q.image_url.trim() : null,
     };
-
-    if (q.arabic_text) row.arabic_text = q.arabic_text.trim();
-    if (q.source) row.source = q.source.trim();
-    if (q.image_url) row.image_url = q.image_url.trim();
-
-    return row;
   });
 
-  // 3. Log PAYLOAD
-  console.log("QUESTION INSERT PAYLOAD", questionPayload);
+  // Candidate FK combinations to test:
+  // For free exams: primary is free_exam_id, secondary is exam_id
+  // For course exams: primary is exam_id, secondary is free_exam_id
+  const fkCandidates: Array<Record<string, string | null>> = isFree
+    ? [{ free_exam_id: examId, exam_id: null }, { free_exam_id: examId }, { exam_id: examId }]
+    : [{ exam_id: examId, free_exam_id: null }, { exam_id: examId }, { free_exam_id: examId }];
 
-  // 4. Execute Batch INSERT into Supabase public.questions
-  let { data, error } = await supabase.from("questions").insert(questionPayload).select();
+  let finalData: any[] | null = null;
+  let finalError: any = null;
 
-  // 5. Log RESULT
-  console.log("QUESTION INSERT RESULT", {
-    data,
-    error,
-  });
+  // Try FK candidates and Correct Option candidates
+  fkLoop: for (const fkObj of fkCandidates) {
+    for (let formatIdx = 0; formatIdx < CORRECT_OPTION_FORMAT_CANDIDATES.length; formatIdx++) {
+      const format = CORRECT_OPTION_FORMAT_CANDIDATES[formatIdx];
 
-  // Handle CHECK CONSTRAINT on correct_option if necessary (code 23514)
-  if (error && (error.code === "23514" || error.message?.includes("correct_option") || error.message?.includes("check constraint"))) {
-    console.warn("⚠️ correct_option check constraint encountered, retrying with letter representation ('A', 'B', 'C', 'D')...");
-    const letterMap: Record<string, string> = { option_a: "A", option_b: "B", option_c: "C", option_d: "D" };
-    const altPayload = questionPayload.map((p) => ({
-      ...p,
-      correct_option: letterMap[p.correct_option] || "A",
-    }));
-    console.log("QUESTION INSERT RETRY PAYLOAD (ALT CORRECT OPTION)", altPayload);
-    const retryRes = await supabase.from("questions").insert(altPayload).select();
-    data = retryRes.data;
-    error = retryRes.error;
-    console.log("QUESTION INSERT RETRY RESULT", { data, error });
+      const payload = baseItems.map((item) => {
+        const row: any = {
+          ...fkObj,
+          question_number: item.question_number,
+          question_text: item.question_text,
+          option_a: item.option_a,
+          option_b: item.option_b,
+          option_c: item.option_c,
+          option_d: item.option_d,
+          correct_option: format[item.correctIdx] || format[0],
+          explanation: item.explanation,
+          marks: item.marks,
+          negative_marks: item.negative_marks,
+          sort_order: item.sort_order,
+        };
+
+        if (item.arabic_text) row.arabic_text = item.arabic_text;
+        if (item.source) row.source = item.source;
+        if (item.image_url) row.image_url = item.image_url;
+
+        // Clean out explicit null keys if not supported
+        if (row.exam_id === null) delete row.exam_id;
+        if (row.free_exam_id === null) delete row.free_exam_id;
+
+        return row;
+      });
+
+      console.log(`🚀 Attempting batch question insert (Format: ${format[0]}, FK: ${JSON.stringify(fkObj)}):`, payload.length);
+      const res = await supabase.from("questions").insert(payload).select();
+
+      if (!res.error && res.data && res.data.length > 0) {
+        console.log("✅ Batch Question Insert Succeeded!", { count: res.data.length, format: format[0] });
+        finalData = res.data;
+        finalError = null;
+        break fkLoop;
+      }
+
+      finalError = res.error;
+      console.warn(`⚠️ Insert attempt with format ${format[0]} returned:`, res.error?.message, `Code: ${res.error?.code}`);
+
+      // If missing column (42703), retry without non-core columns
+      if (res.error && (res.error.code === "42703" || res.error.message?.includes("column") || res.error.message?.includes("does not exist"))) {
+        console.warn("⚠️ Column missing, retrying format with strictly minimal columns...");
+        const minimalPayload = payload.map((p) => {
+          const core: any = {
+            question_number: p.question_number,
+            question_text: p.question_text,
+            option_a: p.option_a,
+            option_b: p.option_b,
+            option_c: p.option_c,
+            option_d: p.option_d,
+            correct_option: p.correct_option,
+            explanation: p.explanation,
+            marks: p.marks,
+            negative_marks: p.negative_marks,
+            sort_order: p.sort_order,
+          };
+          if (p.exam_id) core.exam_id = p.exam_id;
+          if (p.free_exam_id) core.free_exam_id = p.free_exam_id;
+          return core;
+        });
+
+        const minRes = await supabase.from("questions").insert(minimalPayload).select();
+        if (!minRes.error && minRes.data && minRes.data.length > 0) {
+          console.log("✅ Minimal Column Question Insert Succeeded!");
+          finalData = minRes.data;
+          finalError = null;
+          break fkLoop;
+        }
+        finalError = minRes.error;
+      }
+
+      // If it's not a check constraint error (23514), and it's a foreign key error (23503), jump to next FK candidate immediately
+      if (res.error && res.error.code === "23503") {
+        console.warn("⚠️ Foreign key constraint mismatch, switching FK mode...");
+        break; // break inner format loop to try next FK candidate
+      }
+    }
   }
 
-  // Handle Column Missing error (code 42703) e.g., non-core columns
-  if (error && (error.code === "42703" || error.message?.includes("column") || error.message?.includes("does not exist"))) {
-    console.warn("⚠️ Column missing on questions table, retrying with strictly core columns...");
-    const corePayload = questionPayload.map((p) => ({
-      exam_id: p.exam_id,
-      question_number: p.question_number,
-      question_text: p.question_text,
-      option_a: p.option_a,
-      option_b: p.option_b,
-      option_c: p.option_c,
-      option_d: p.option_d,
-      correct_option: p.correct_option,
-      explanation: p.explanation,
-      marks: p.marks,
-      negative_marks: p.negative_marks,
-      sort_order: p.sort_order,
-    }));
-    console.log("QUESTION INSERT RETRY PAYLOAD (CORE ONLY)", corePayload);
-    const retryRes = await supabase.from("questions").insert(corePayload).select();
-    data = retryRes.data;
-    error = retryRes.error;
-    console.log("QUESTION INSERT RETRY RESULT (CORE ONLY)", { data, error });
-  }
+  // Row-by-Row Fallback if batch insert encountered an isolated row issue
+  if (!finalData || finalData.length === 0) {
+    console.warn("⚠️ Batch insert did not succeed. Attempting individual row insertion with adaptive format resolution...");
+    const individuallyInserted: any[] = [];
+    let singleError: any = null;
 
-  // Handle Free Exam Foreign Key error (if schema has free_exam_id FK constraint instead of exam_id FK constraint)
-  if (error && (error.code === "23503" || error.message?.includes("foreign key") || error.message?.includes("free_exams"))) {
-    console.warn("⚠️ Foreign key constraint issue, retrying with free_exam_id column...");
-    const freeExamPayload = questionPayload.map((p) => ({
-      ...p,
-      exam_id: null,
-      free_exam_id: examId,
-    }));
-    const retryRes = await supabase.from("questions").insert(freeExamPayload).select();
-    if (!retryRes.error) {
-      data = retryRes.data;
-      error = null;
-      console.log("QUESTION INSERT RETRY SUCCESS WITH FREE_EXAM_ID", { data });
+    for (let i = 0; i < baseItems.length; i++) {
+      const item = baseItems[i];
+      let inserted = false;
+
+      formatTry: for (let formatIdx = 0; formatIdx < CORRECT_OPTION_FORMAT_CANDIDATES.length; formatIdx++) {
+        const format = CORRECT_OPTION_FORMAT_CANDIDATES[formatIdx];
+        for (const fkObj of fkCandidates) {
+          const singleRow: any = {
+            ...fkObj,
+            question_number: item.question_number,
+            question_text: item.question_text,
+            option_a: item.option_a,
+            option_b: item.option_b,
+            option_c: item.option_c,
+            option_d: item.option_d,
+            correct_option: format[item.correctIdx] || format[0],
+            explanation: item.explanation,
+            marks: item.marks,
+            negative_marks: item.negative_marks,
+            sort_order: item.sort_order,
+          };
+          if (singleRow.exam_id === null) delete singleRow.exam_id;
+          if (singleRow.free_exam_id === null) delete singleRow.free_exam_id;
+
+          const sRes = await supabase.from("questions").insert([singleRow]).select().single();
+          if (!sRes.error && sRes.data) {
+            individuallyInserted.push(sRes.data);
+            inserted = true;
+            break formatTry;
+          }
+          singleError = sRes.error;
+        }
+      }
+
+      if (!inserted) {
+        console.error(`❌ Failed to insert question #${i + 1}:`, singleError);
+      }
+    }
+
+    if (individuallyInserted.length > 0) {
+      finalData = individuallyInserted;
+      finalError = null;
     }
   }
 
   // If still error, format comprehensive error details
-  if (error) {
-    const errorDetails = `Error: ${error.message}${error.details ? ` | Details: ${error.details}` : ""}${error.hint ? ` | Hint: ${error.hint}` : ""}${error.code ? ` | Code: ${error.code}` : ""}`;
-    console.error("❌ QUESTION INSERT FAILED:", errorDetails, error);
+  if (finalError || !finalData) {
+    const errorDetails = finalError
+      ? `Error: ${finalError.message}${finalError.details ? ` | Details: ${finalError.details}` : ""}${finalError.hint ? ` | Hint: ${finalError.hint}` : ""}${finalError.code ? ` | Code: ${finalError.code}` : ""}`
+      : "কোনো প্রশ্ন সংরক্ষণ করা সম্ভব হয়নি।";
+    console.error("❌ QUESTION INSERT FAILED COMPLETELY:", errorDetails, finalError);
     return {
       data: null,
       error: errorDetails,
-      errorObj: error,
+      errorObj: finalError,
     };
   }
 
-  const insertedRows = (data as any[]) || [];
+  const insertedRows = (finalData as any[]) || [];
   const formatted: Question[] = insertedRows.map((row, idx) => {
     const orig = rawQuestions[idx] || {};
     const optArr = [row.option_a || "", row.option_b || "", row.option_c || "", row.option_d || ""];
     let cIdx = 0;
     const co = String(row.correct_option || "").toLowerCase();
-    if (co === "option_b" || co === "b" || co === "খ" || co === "1" || co === "১") cIdx = 1;
-    else if (co === "option_c" || co === "c" || co === "গ" || co === "2" || co === "২") cIdx = 2;
-    else if (co === "option_d" || co === "d" || co === "ঘ" || co === "3" || co === "৩") cIdx = 3;
+    if (co === "option_b" || co === "b" || co === "খ" || co === "1" || co === "২") cIdx = 1;
+    else if (co === "option_c" || co === "c" || co === "গ" || co === "2" || co === "৩") cIdx = 2;
+    else if (co === "option_d" || co === "d" || co === "ঘ" || co === "3" || co === "৪") cIdx = 3;
 
     return {
       id: row.id,
