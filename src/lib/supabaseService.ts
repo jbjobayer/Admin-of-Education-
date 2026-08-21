@@ -695,136 +695,200 @@ export function normalizeCorrectOption(q: any): string {
   return "option_a";
 }
 
+/**
+ * Standard Batch Question Insertion for Exams
+ * Inserts questions into public.questions using the exact created exam UUID as exam_id.
+ * Includes detailed console logs before and after insertion as requested.
+ */
+export async function dbInsertExamQuestions(
+  examId: string,
+  rawQuestions: (Partial<Question> | any)[]
+): Promise<ServiceResult<Question[]>> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    return { data: null, error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
+  }
+
+  if (!examId || !isValidUuid(examId)) {
+    const err = `অবৈধ বা অনুপস্থিত Exam UUID: ${examId}`;
+    console.error("❌ QUESTION INSERT ERROR: Invalid Exam UUID", { examId });
+    return { data: null, error: err, errorObj: { message: err, code: "INVALID_EXAM_UUID" } };
+  }
+
+  if (!rawQuestions || !Array.isArray(rawQuestions) || rawQuestions.length === 0) {
+    return { data: [], error: null };
+  }
+
+  // 1. Log START
+  console.log("QUESTION INSERT START", {
+    examId: examId,
+    questionCount: rawQuestions.length,
+    questions: rawQuestions,
+  });
+
+  // 2. Prepare payload matching public.questions schema
+  const questionPayload = rawQuestions.map((q, idx) => {
+    const qText = (q.question_text || q.question || "").trim();
+    const optA = (q.option_a || (q.options ? q.options[0] : "") || "ক").trim();
+    const optB = (q.option_b || (q.options ? q.options[1] : "") || "খ").trim();
+    const optC = (q.option_c || (q.options ? q.options[2] : "") || "গ").trim();
+    const optD = (q.option_d || (q.options ? q.options[3] : "") || "ঘ").trim();
+    const correctOpt = normalizeCorrectOption(q);
+
+    const row: any = {
+      exam_id: examId,
+      question_number: Number(q.question_number || idx + 1),
+      question_text: qText || `প্রশ্ন ${idx + 1}`,
+      option_a: optA,
+      option_b: optB,
+      option_c: optC,
+      option_d: optD,
+      correct_option: correctOpt,
+      explanation: (q.explanation || "").trim(),
+      marks: Number(q.marks ?? 1.0),
+      negative_marks: Number(q.negative_marks ?? 0.25),
+      sort_order: Number(q.sort_order ?? idx),
+    };
+
+    if (q.arabic_text) row.arabic_text = q.arabic_text.trim();
+    if (q.source) row.source = q.source.trim();
+    if (q.image_url) row.image_url = q.image_url.trim();
+
+    return row;
+  });
+
+  // 3. Log PAYLOAD
+  console.log("QUESTION INSERT PAYLOAD", questionPayload);
+
+  // 4. Execute Batch INSERT into Supabase public.questions
+  let { data, error } = await supabase.from("questions").insert(questionPayload).select();
+
+  // 5. Log RESULT
+  console.log("QUESTION INSERT RESULT", {
+    data,
+    error,
+  });
+
+  // Handle CHECK CONSTRAINT on correct_option if necessary (code 23514)
+  if (error && (error.code === "23514" || error.message?.includes("correct_option") || error.message?.includes("check constraint"))) {
+    console.warn("⚠️ correct_option check constraint encountered, retrying with letter representation ('A', 'B', 'C', 'D')...");
+    const letterMap: Record<string, string> = { option_a: "A", option_b: "B", option_c: "C", option_d: "D" };
+    const altPayload = questionPayload.map((p) => ({
+      ...p,
+      correct_option: letterMap[p.correct_option] || "A",
+    }));
+    console.log("QUESTION INSERT RETRY PAYLOAD (ALT CORRECT OPTION)", altPayload);
+    const retryRes = await supabase.from("questions").insert(altPayload).select();
+    data = retryRes.data;
+    error = retryRes.error;
+    console.log("QUESTION INSERT RETRY RESULT", { data, error });
+  }
+
+  // Handle Column Missing error (code 42703) e.g., non-core columns
+  if (error && (error.code === "42703" || error.message?.includes("column") || error.message?.includes("does not exist"))) {
+    console.warn("⚠️ Column missing on questions table, retrying with strictly core columns...");
+    const corePayload = questionPayload.map((p) => ({
+      exam_id: p.exam_id,
+      question_number: p.question_number,
+      question_text: p.question_text,
+      option_a: p.option_a,
+      option_b: p.option_b,
+      option_c: p.option_c,
+      option_d: p.option_d,
+      correct_option: p.correct_option,
+      explanation: p.explanation,
+      marks: p.marks,
+      negative_marks: p.negative_marks,
+      sort_order: p.sort_order,
+    }));
+    console.log("QUESTION INSERT RETRY PAYLOAD (CORE ONLY)", corePayload);
+    const retryRes = await supabase.from("questions").insert(corePayload).select();
+    data = retryRes.data;
+    error = retryRes.error;
+    console.log("QUESTION INSERT RETRY RESULT (CORE ONLY)", { data, error });
+  }
+
+  // Handle Free Exam Foreign Key error (if schema has free_exam_id FK constraint instead of exam_id FK constraint)
+  if (error && (error.code === "23503" || error.message?.includes("foreign key") || error.message?.includes("free_exams"))) {
+    console.warn("⚠️ Foreign key constraint issue, retrying with free_exam_id column...");
+    const freeExamPayload = questionPayload.map((p) => ({
+      ...p,
+      exam_id: null,
+      free_exam_id: examId,
+    }));
+    const retryRes = await supabase.from("questions").insert(freeExamPayload).select();
+    if (!retryRes.error) {
+      data = retryRes.data;
+      error = null;
+      console.log("QUESTION INSERT RETRY SUCCESS WITH FREE_EXAM_ID", { data });
+    }
+  }
+
+  // If still error, format comprehensive error details
+  if (error) {
+    const errorDetails = `Error: ${error.message}${error.details ? ` | Details: ${error.details}` : ""}${error.hint ? ` | Hint: ${error.hint}` : ""}${error.code ? ` | Code: ${error.code}` : ""}`;
+    console.error("❌ QUESTION INSERT FAILED:", errorDetails, error);
+    return {
+      data: null,
+      error: errorDetails,
+      errorObj: error,
+    };
+  }
+
+  const insertedRows = (data as any[]) || [];
+  const formatted: Question[] = insertedRows.map((row, idx) => {
+    const orig = rawQuestions[idx] || {};
+    const optArr = [row.option_a || "", row.option_b || "", row.option_c || "", row.option_d || ""];
+    let cIdx = 0;
+    const co = String(row.correct_option || "").toLowerCase();
+    if (co === "option_b" || co === "b" || co === "খ" || co === "1" || co === "১") cIdx = 1;
+    else if (co === "option_c" || co === "c" || co === "গ" || co === "2" || co === "২") cIdx = 2;
+    else if (co === "option_d" || co === "d" || co === "ঘ" || co === "3" || co === "৩") cIdx = 3;
+
+    return {
+      id: row.id,
+      exam_id: row.exam_id,
+      free_exam_id: row.free_exam_id,
+      question_number: Number(row.question_number || idx + 1),
+      question_text: row.question_text || row.question || "",
+      arabic_text: row.arabic_text || orig.arabic_text,
+      option_a: row.option_a || optArr[0],
+      option_b: row.option_b || optArr[1],
+      option_c: row.option_c || optArr[2],
+      option_d: row.option_d || optArr[3],
+      correct_option: row.correct_option || "option_a",
+      explanation: row.explanation || orig.explanation || "",
+      source: row.source || orig.source || "",
+      marks: Number(row.marks ?? 1.0),
+      negative_marks: Number(row.negative_marks ?? 0.25),
+      image_url: row.image_url || "",
+      sort_order: Number(row.sort_order ?? idx),
+      created_at: row.created_at || new Date().toISOString(),
+      question: row.question_text || row.question || "",
+      options: optArr,
+      correct_index: cIdx,
+      subject_id: orig.subject_id || "sub-1",
+      subject_name: orig.subject_name || "মাদ্রাসা কারিকুলাম",
+      topic: orig.topic || "সাধারণ",
+      difficulty: orig.difficulty || "Medium",
+      exam_type: orig.exam_type || "NTRCA",
+      language: orig.language || "bn",
+    };
+  });
+
+  return { data: formatted, error: null };
+}
+
 export async function saveOrUpdateExamQuestions(
   examId: string,
   rawQuestions: (Partial<Question> | any)[],
-  isFree: boolean
-): Promise<{ success: boolean; data: Question[]; error?: string }> {
-  const supabase = getSupabaseClient();
-  if (!supabase) return { success: false, data: [], error: "Supabase ক্লায়েন্ট সংযুক্ত নয়।" };
-  if (!rawQuestions || !Array.isArray(rawQuestions) || rawQuestions.length === 0) {
-    return { success: true, data: [] };
+  isFree: boolean = false
+): Promise<{ success: boolean; data: Question[]; error?: string; errorObj?: any }> {
+  const res = await dbInsertExamQuestions(examId, rawQuestions);
+  if (res.error || !res.data) {
+    return { success: false, data: [], error: res.error || "প্রশ্ন সংরক্ষণ ব্যর্থ", errorObj: res.errorObj };
   }
-
-  try {
-    const formattedPayloads = rawQuestions.map((q, idx) => {
-      const qText = (q.question_text || q.question || "").trim();
-      const optA = (q.option_a || (q.options ? q.options[0] : "") || "ক").trim();
-      const optB = (q.option_b || (q.options ? q.options[1] : "") || "খ").trim();
-      const optC = (q.option_c || (q.options ? q.options[2] : "") || "গ").trim();
-      const optD = (q.option_d || (q.options ? q.options[3] : "") || "ঘ").trim();
-      const correctOpt = normalizeCorrectOption(q);
-
-      const item: any = {
-        exam_id: isFree ? null : examId,
-        free_exam_id: isFree ? examId : null,
-        question_number: Number(q.question_number || idx + 1),
-        question_text: qText || `প্রশ্ন ${idx + 1}`,
-        arabic_text: q.arabic_text || null,
-        option_a: optA,
-        option_b: optB,
-        option_c: optC,
-        option_d: optD,
-        correct_option: correctOpt,
-        explanation: (q.explanation || "").trim(),
-        source: q.source || null,
-        topic: q.topic || "সাধারণ",
-        subject_id: q.subject_id || "sub-1",
-        subject_name: q.subject_name || "মাদ্রাসা কারিকুলাম",
-        difficulty: q.difficulty || "Medium",
-        exam_type: q.exam_type || "NTRCA",
-        language: q.language || "bn",
-        marks: Number(q.marks ?? 1.0),
-        negative_marks: Number(q.negative_marks ?? 0.25),
-        sort_order: Number(q.sort_order ?? idx),
-      };
-
-      if (q.id && isValidUuid(q.id)) {
-        item.id = q.id;
-      }
-      return item;
-    });
-
-    console.log(`🚀 Persisting ${formattedPayloads.length} questions for exam ${examId} in Supabase public.questions`);
-
-    // Try upserting directly
-    let { data, error } = await supabase.from("questions").upsert(formattedPayloads).select();
-
-    // Check constraint fallback
-    if (error && (error.code === "23514" || error.message?.includes("check constraint") || error.message?.includes("correct_option"))) {
-      const letterMap: Record<string, string> = { option_a: "A", option_b: "B", option_c: "C", option_d: "D" };
-      const altPayloads = formattedPayloads.map((p) => ({
-        ...p,
-        correct_option: letterMap[p.correct_option] || "A",
-      }));
-      const retry = await supabase.from("questions").upsert(altPayloads).select();
-      data = retry.data;
-      error = retry.error;
-    }
-
-    // Missing column fallback (e.g. free_exam_id column doesn't exist)
-    if (error && (error.code === "42703" || error.message?.includes("free_exam_id") || error.message?.includes("does not exist"))) {
-      console.warn("⚠️ free_exam_id column missing, fallback to exam_id");
-      const fallbackPayloads = formattedPayloads.map(({ free_exam_id, ...rest }) => ({
-        ...rest,
-        exam_id: examId,
-      }));
-      const retry = await supabase.from("questions").upsert(fallbackPayloads).select();
-      data = retry.data;
-      error = retry.error;
-    }
-
-    if (error) {
-      console.error("❌ Error persisting questions in Supabase:", error);
-      return { success: false, data: [], error: error.message };
-    }
-
-    const savedRows = (data as any[]) || [];
-    const formattedQuestions: Question[] = savedRows.map((row, idx) => {
-      const orig = rawQuestions[idx] || {};
-      return {
-        id: row.id,
-        exam_id: row.exam_id,
-        free_exam_id: row.free_exam_id,
-        question_number: Number(row.question_number || idx + 1),
-        question_text: row.question_text,
-        arabic_text: row.arabic_text || orig.arabic_text,
-        option_a: row.option_a,
-        option_b: row.option_b,
-        option_c: row.option_c,
-        option_d: row.option_d,
-        correct_option: row.correct_option,
-        explanation: row.explanation || orig.explanation || "",
-        source: row.source || orig.source || "",
-        topic: row.topic || orig.topic || "সাধারণ",
-        subject_id: row.subject_id || orig.subject_id || "sub-1",
-        subject_name: row.subject_name || orig.subject_name || "মাদ্রাসা কারিকুলাম",
-        difficulty: row.difficulty || orig.difficulty || "Medium",
-        exam_type: row.exam_type || orig.exam_type || "NTRCA",
-        language: row.language || orig.language || "bn",
-        marks: Number(row.marks ?? 1),
-        negative_marks: Number(row.negative_marks ?? 0.25),
-        sort_order: Number(row.sort_order ?? idx),
-        created_at: row.created_at || new Date().toISOString(),
-        question: row.question_text,
-        options: [row.option_a, row.option_b, row.option_c, row.option_d],
-        correct_index:
-          row.correct_option === "option_b" || row.correct_option === "B" || row.correct_option === "b"
-            ? 1
-            : row.correct_option === "option_c" || row.correct_option === "C" || row.correct_option === "c"
-            ? 2
-            : row.correct_option === "option_d" || row.correct_option === "D" || row.correct_option === "d"
-            ? 3
-            : 0,
-        exam_scope: isFree ? "free" : "course",
-      };
-    });
-
-    return { success: true, data: formattedQuestions };
-  } catch (err: any) {
-    console.error("❌ Exception in saveOrUpdateExamQuestions:", err);
-    return { success: false, data: [], error: err?.message || "ব্যর্থ" };
-  }
+  return { success: true, data: res.data };
 }
 
 export async function dbCreateCourseExam(
@@ -885,8 +949,16 @@ export async function dbCreateCourseExam(
     // Persist and link questions into public.questions
     let syncedQuestions = exam.questions || [];
     if (exam.questions && Array.isArray(exam.questions) && exam.questions.length > 0 && data?.id) {
-      const qRes = await saveOrUpdateExamQuestions(data.id, exam.questions, false);
-      if (qRes.success && qRes.data.length > 0) {
+      const qRes = await dbInsertExamQuestions(data.id, exam.questions);
+      if (qRes.error) {
+        console.error("❌ Questions failed to insert for course exam:", qRes.error);
+        return {
+          data: null,
+          error: `পরীক্ষা তৈরি সম্পন্ন হলেও প্রশ্ন যুক্ত করতে ব্যর্থ হয়েছে: ${qRes.error}`,
+          errorObj: qRes.errorObj,
+        };
+      }
+      if (qRes.data && qRes.data.length > 0) {
         syncedQuestions = qRes.data;
       }
     }
@@ -1066,8 +1138,16 @@ export async function dbCreateFreeExam(
     // Attach/link questions if provided
     let syncedQuestions = exam.questions || [];
     if (exam.questions && Array.isArray(exam.questions) && exam.questions.length > 0 && data?.id) {
-      const qRes = await saveOrUpdateExamQuestions(data.id, exam.questions, true);
-      if (qRes.success && qRes.data.length > 0) {
+      const qRes = await dbInsertExamQuestions(data.id, exam.questions);
+      if (qRes.error) {
+        console.error("❌ Questions failed to insert for free exam:", qRes.error);
+        return {
+          data: null,
+          error: `ফ্রি পরীক্ষা তৈরি সম্পন্ন হলেও প্রশ্ন যুক্ত করতে ব্যর্থ হয়েছে: ${qRes.error}`,
+          errorObj: qRes.errorObj,
+        };
+      }
+      if (qRes.data && qRes.data.length > 0) {
         syncedQuestions = qRes.data;
       }
     }

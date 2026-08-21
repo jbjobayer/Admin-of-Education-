@@ -692,15 +692,21 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       };
 
       if (examToEdit) {
-        updateExam(examToEdit.id, examData);
+        const res = await updateExam(examToEdit.id, examData);
+        if (res && res.success === false) {
+          return;
+        }
       } else {
-        addExam(examData);
+        const res = await addExam(examData);
+        if (res && res.success === false) {
+          return;
+        }
       }
 
       onClose();
     } catch (err: any) {
       console.error("Error submitting exam:", err);
-      showToast("পরীক্ষা সংরক্ষণ করতে সমস্যা হয়েছে।", "error");
+      showToast(`পরীক্ষা সংরক্ষণ করতে সমস্যা হয়েছে: ${err?.message || ""}`, "error");
     } finally {
       setIsSaving(false);
     }

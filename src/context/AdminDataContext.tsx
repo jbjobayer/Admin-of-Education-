@@ -113,8 +113,8 @@ interface AdminDataContextType {
   deleteQuestion: (id: string) => Promise<{ success: boolean; error?: string }>;
 
   // Exam CRUD (exams table)
-  addExam: (exam: Omit<Exam, "id" | "created_at" | "participant_count">) => Exam;
-  updateExam: (id: string, exam: Partial<Exam>) => void;
+  addExam: (exam: Omit<Exam, "id" | "created_at" | "participant_count">) => Promise<{ success: boolean; data?: Exam; error?: string }>;
+  updateExam: (id: string, exam: Partial<Exam>) => Promise<{ success: boolean; data?: Exam; error?: string }>;
   deleteExam: (id: string) => void;
   toggleExamStatus: (id: string) => void;
   publishExamResult: (id: string) => void;
@@ -783,7 +783,9 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // -------------------------------------------------------------
   // Exam CRUD (exams table)
   // -------------------------------------------------------------
-  const addExam = (exam: Omit<Exam, "id" | "created_at" | "participant_count">): Exam => {
+  const addExam = async (
+    exam: Omit<Exam, "id" | "created_at" | "participant_count">
+  ): Promise<{ success: boolean; data?: Exam; error?: string }> => {
     const tempId = `exam-${Date.now()}`;
     const newExam: Exam = {
       ...exam,
@@ -817,44 +819,75 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       );
     }
 
-    // Asynchronous Supabase Insert
-    dbCreateExam(exam)
-      .then((res) => {
-        if (res.error) {
-          handleSupabaseNotice(res, "পরীক্ষা");
-        } else if (res.data) {
-          const realExam = res.data;
-          setExams((prev) => prev.map((e) => (e.id === tempId ? realExam : e)));
+    try {
+      // Asynchronous Supabase Insert
+      const res = await dbCreateExam(exam);
+      if (res.error || !res.data) {
+        console.error("❌ Supabase Exam/Question Creation Error:", res.error, res.errorObj);
+        const errMsg = res.error || res.errorObj?.message || "পরীক্ষা তৈরি ব্যর্থ হয়েছে";
+        showToast(errMsg, "error");
+        // Revert optimistic state
+        setExams((prev) => prev.filter((e) => e.id !== tempId));
+        return { success: false, error: errMsg };
+      }
 
-          // Update question associations from tempId to realExam.id
-          if (realExam.id) {
-            const isFree = Boolean(realExam.is_free || realExam.exam_scope === "free" || !realExam.course_id);
-            setQuestions((prev) =>
-              prev.map((q) => {
-                if (q.exam_id === tempId || q.free_exam_id === tempId) {
-                  return {
-                    ...q,
-                    exam_id: isFree ? undefined : realExam.id,
-                    free_exam_id: isFree ? realExam.id : undefined,
-                    exam_scope: isFree ? ("free" as const) : ("course" as const),
-                  };
-                }
-                return q;
-              })
-            );
+      const realExam = res.data;
+      console.log("✅ Exam created successfully in Supabase:", realExam.id);
+
+      // Replace tempId with real DB UUID in exams state
+      setExams((prev) => prev.map((e) => (e.id === tempId ? realExam : e)));
+
+      // If the exam has questions saved, update the global questions collection
+      if (realExam.questions && Array.isArray(realExam.questions) && realExam.questions.length > 0) {
+        console.log(`✅ Associating ${realExam.questions.length} questions for exam ${realExam.id} in context state.`);
+        setQuestions((prev) => {
+          const insertedMap = new Map(realExam.questions!.map((q) => [q.id, q]));
+          // Also match by question text to replace any local/temp question objects
+          const textMap = new Map(realExam.questions!.map((q) => [q.question_text || q.question, q]));
+
+          const updated = prev.map((q) => {
+            const byId = insertedMap.get(q.id);
+            if (byId) return byId;
+            const byText = textMap.get(q.question_text || q.question);
+            if (byText) return byText;
+            if (q.exam_id === tempId || q.free_exam_id === tempId) {
+              const isFree = Boolean(realExam.is_free || realExam.exam_scope === "free" || !realExam.course_id);
+              return {
+                ...q,
+                exam_id: isFree ? undefined : realExam.id,
+                free_exam_id: isFree ? realExam.id : undefined,
+                exam_scope: isFree ? ("free" as const) : ("course" as const),
+              };
+            }
+            return q;
+          });
+
+          // Add any questions returned from database that aren't already in state
+          const currentIds = new Set(updated.map((q) => q.id));
+          for (const rq of realExam.questions!) {
+            if (!currentIds.has(rq.id)) {
+              updated.unshift(rq);
+            }
           }
+          return updated;
+        });
+      }
 
-          showToast("নতুন পরীক্ষা সফলভাবে তৈরি ও Supabase ক্লাউডে সিঙ্ক হয়েছে!", "success");
-        }
-      })
-      .catch((err) => {
-        console.error("Error creating exam in Supabase:", err);
-      });
-
-    return newExam;
+      showToast("নতুন পরীক্ষা ও প্রশ্নসমূহ সফলভাবে তৈরি ও Supabase ক্লাউডে সিঙ্ক হয়েছে!", "success");
+      return { success: true, data: realExam };
+    } catch (err: any) {
+      console.error("❌ Unexpected error creating exam in Supabase:", err);
+      const msg = err?.message || "পরীক্ষা তৈরি করতে সমস্যা হয়েছে।";
+      showToast(`ত্রুটি: ${msg}`, "error");
+      setExams((prev) => prev.filter((e) => e.id !== tempId));
+      return { success: false, error: msg };
+    }
   };
 
-  const updateExam = (id: string, exam: Partial<Exam>) => {
+  const updateExam = async (
+    id: string,
+    exam: Partial<Exam>
+  ): Promise<{ success: boolean; data?: Exam; error?: string }> => {
     setExams((prev) =>
       prev.map((e) => {
         if (e.id === id) {
@@ -870,35 +903,32 @@ export const AdminDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       })
     );
 
-    // Optimistically update questions list if questions are passed
-    if (exam.questions && Array.isArray(exam.questions)) {
-      const isFree = Boolean(exam.is_free || exam.exam_scope === "free" || (!exam.course_id && exam.category === "free_test"));
-      const assignedIds = new Set(exam.questions.map((q) => q.id));
+    try {
+      const res = await dbUpdateExam(id, exam);
+      if (res.error || !res.data) {
+        console.error("❌ Supabase Exam Update Error:", res.error, res.errorObj);
+        const errMsg = res.error || res.errorObj?.message || "পরীক্ষা আপডেট ব্যর্থ হয়েছে";
+        showToast(errMsg, "error");
+        return { success: false, error: errMsg };
+      }
 
-      setQuestions((prev) =>
-        prev.map((q) => {
-          if (assignedIds.has(q.id)) {
-            return {
-              ...q,
-              exam_id: isFree ? undefined : id,
-              free_exam_id: isFree ? id : undefined,
-              exam_scope: isFree ? ("free" as const) : ("course" as const),
-            };
-          }
-          return q;
-        })
-      );
+      const updated = res.data;
+      setExams((prev) => prev.map((e) => (e.id === id ? updated : e)));
+
+      if (updated.questions && Array.isArray(updated.questions) && updated.questions.length > 0) {
+        setQuestions((prev) => {
+          const qMap = new Map(updated.questions!.map((q) => [q.id, q]));
+          return prev.map((q) => qMap.get(q.id) || q);
+        });
+      }
+
+      showToast("পরীক্ষা ও প্রশ্নের তথ্য সফলভাবে আপডেট ও সিঙ্ক করা হয়েছে!", "success");
+      return { success: true, data: updated };
+    } catch (err: any) {
+      console.error("❌ Error updating exam:", err);
+      showToast(`পরীক্ষা আপডেট ব্যর্থ: ${err?.message || "ত্রুটি"}`, "error");
+      return { success: false, error: err?.message };
     }
-
-    dbUpdateExam(id, exam)
-      .then((res) => {
-        if (res.error) {
-          handleSupabaseNotice(res, "পরীক্ষা আপডেট");
-        } else {
-          showToast("পরীক্ষার তথ্য আপডেট ও সিঙ্ক করা হয়েছে!", "success");
-        }
-      })
-      .catch((err) => console.error("Error updating exam:", err));
   };
 
   const deleteExam = (id: string) => {
