@@ -21,6 +21,17 @@ import {
   ChevronDown,
   ChevronUp,
   Loader2,
+  ArrowRight,
+  ArrowLeft,
+  Edit3,
+  Save,
+  MoveUp,
+  MoveDown,
+  FileText,
+  Clock,
+  Award,
+  AlertCircle,
+  ListChecks,
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import {
@@ -31,6 +42,7 @@ import {
   QuestionDifficulty,
   ExamTargetCategory,
 } from "../../types";
+import { ExamPreviewStep } from "./ExamPreviewStep";
 
 interface ExamFormModalProps {
   isOpen: boolean;
@@ -71,9 +83,22 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
   const [status, setStatus] = useState<ExamStatus>("live");
   const [isSaving, setIsSaving] = useState(false);
 
+  // Step Management: 'form' (Step 1) or 'preview' (Step 2)
+  const [currentStep, setCurrentStep] = useState<"form" | "preview">("form");
+
   // Selected Questions currently attached to this exam
   const [examQuestions, setExamQuestions] = useState<Question[]>([]);
   const [showQuestionsList, setShowQuestionsList] = useState(false);
+
+  // Preview Inline Question Editing State
+  const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
+  const [editQText, setEditQText] = useState<string>("");
+  const [editQArabic, setEditQArabic] = useState<string>("");
+  const [editQOptions, setEditQOptions] = useState<string[]>(["", "", "", ""]);
+  const [editQCorrectIndex, setEditQCorrectIndex] = useState<number>(0);
+  const [editQExplanation, setEditQExplanation] = useState<string>("");
+  const [editQTopic, setEditQTopic] = useState<string>("");
+  const [editQDifficulty, setEditQDifficulty] = useState<QuestionDifficulty>("Medium");
 
   // Active question addition tab inside the modal (Direct, No popup)
   const [activeAddMode, setActiveAddMode] = useState<QuestionAddMode>("bank");
@@ -191,6 +216,8 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       setPasteSubject("নাহু ও সরফ");
       setAiSubject("নাহু ও সরফ");
     }
+    setCurrentStep("form");
+    setEditingQuestionId(null);
   }, [examToEdit, initialCourseId, isOpen]);
 
   // Sync subject field changes to sub-tabs
@@ -199,6 +226,107 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
     if (!manualSubject || manualSubject === subject) setManualSubject(newSub);
     if (!pasteSubject || pasteSubject === subject) setPasteSubject(newSub);
     if (!aiSubject || aiSubject === subject) setAiSubject(newSub);
+  };
+
+  // ----------------------------------------------------
+  // Step & Preview Handlers
+  // ----------------------------------------------------
+  const handleProceedToPreview = (e?: React.MouseEvent) => {
+    if (e) e.preventDefault();
+    if (!title.trim()) {
+      showToast("দয়া করে পরীক্ষার শিরোনাম প্রদান করুন", "error");
+      return;
+    }
+    const isCourseExam = examTargetType === "course_exam";
+    if (isCourseExam && (!selectedCourseId || selectedCourseId.trim() === "")) {
+      showToast("কোর্স পরীক্ষার জন্য অবশ্যই একটি কোর্স নির্বাচন করতে হবে (course_id NULL থাকা যাবে না)।", "error");
+      return;
+    }
+    if (examQuestions.length === 0) {
+      showToast("দয়া করে পরীক্ষায় অন্তত ১টি প্রশ্ন যুক্ত করুন (ব্যাংক/ম্যানুয়াল/পেস্ট/AI)", "error");
+      return;
+    }
+    setEditingQuestionId(null);
+    setCurrentStep("preview");
+    showToast("প্রিভিউ মোড ওপেন হয়েছে। সব প্রশ্ন ও সঠিক উত্তর যাচাই করুন।", "info");
+  };
+
+  const handleStartEditQuestion = (q: Question) => {
+    setEditingQuestionId(q.id);
+    setEditQText(q.question || q.question_text || "");
+    setEditQArabic(q.arabic_text || "");
+    const opts = q.options && q.options.length >= 4
+      ? [...q.options]
+      : [q.option_a || "", q.option_b || "", q.option_c || "", q.option_d || ""];
+    while (opts.length < 4) opts.push("");
+    setEditQOptions(opts.slice(0, 4));
+    const cIdx = q.correct_index !== undefined
+      ? q.correct_index
+      : (q.correct_option === "option_b" || q.correct_option === "b" || q.correct_option === "B"
+          ? 1
+          : q.correct_option === "option_c" || q.correct_option === "c" || q.correct_option === "C"
+          ? 2
+          : q.correct_option === "option_d" || q.correct_option === "d" || q.correct_option === "D"
+          ? 3
+          : 0);
+    setEditQCorrectIndex(cIdx);
+    setEditQExplanation(q.explanation || "");
+    setEditQTopic(q.topic || "");
+    setEditQDifficulty(q.difficulty || "Medium");
+  };
+
+  const handleSaveEditedQuestion = (qId: string) => {
+    if (!editQText.trim()) {
+      showToast("প্রশ্নের মূল টেক্সট খালি রাখা যাবে না", "error");
+      return;
+    }
+    if (editQOptions.some((opt) => !opt.trim())) {
+      showToast("দয়া করে ৪টি অপশনই পূরণ করুন", "error");
+      return;
+    }
+    setExamQuestions((prev) =>
+      prev.map((q) => {
+        if (q.id === qId) {
+          const optArr = editQOptions.map((o) => o.trim());
+          const correctOptStr = ["option_a", "option_b", "option_c", "option_d"][editQCorrectIndex] || "a";
+          return {
+            ...q,
+            question: editQText.trim(),
+            question_text: editQText.trim(),
+            arabic_text: editQArabic.trim() || undefined,
+            options: optArr,
+            option_a: optArr[0],
+            option_b: optArr[1],
+            option_c: optArr[2],
+            option_d: optArr[3],
+            correct_index: editQCorrectIndex,
+            correct_option: correctOptStr,
+            explanation: editQExplanation.trim(),
+            topic: editQTopic.trim() || q.topic,
+            difficulty: editQDifficulty,
+          };
+        }
+        return q;
+      })
+    );
+    setEditingQuestionId(null);
+    showToast("প্রশ্ন ও অপশন সফলভাবে সংশোধন করা হয়েছে", "success");
+  };
+
+  const handleMoveQuestion = (index: number, direction: "up" | "down") => {
+    if (direction === "up" && index > 0) {
+      const updated = [...examQuestions];
+      const temp = updated[index - 1];
+      updated[index - 1] = updated[index];
+      updated[index] = temp;
+      setExamQuestions(updated);
+    } else if (direction === "down" && index < examQuestions.length - 1) {
+      const updated = [...examQuestions];
+      const temp = updated[index + 1];
+      updated[index + 1] = updated[index];
+      updated[index] = temp;
+      setExamQuestions(updated);
+    }
   };
 
   if (!isOpen) return null;
@@ -759,8 +887,92 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          {/* Section 1: Basic Exam Configurations */}
+        {/* Step Navigation Progress Bar */}
+        <div className="flex items-center justify-between gap-2 p-1.5 rounded-2xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+          <button
+            type="button"
+            onClick={() => setCurrentStep("form")}
+            className={`flex-1 py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              currentStep === "form"
+                ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-sm border border-slate-200 dark:border-slate-700"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
+            }`}
+          >
+            <div
+              className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                currentStep === "form"
+                  ? "bg-emerald-600 text-white font-bold"
+                  : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+              }`}
+            >
+              ১
+            </div>
+            <span>১. পরীক্ষার তথ্য ও প্রশ্ন নির্বাচন</span>
+            {examQuestions.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
+                {examQuestions.length} টি
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleProceedToPreview}
+            className={`flex-1 py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              currentStep === "preview"
+                ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-sm border border-slate-200 dark:border-slate-700"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
+            }`}
+          >
+            <div
+              className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                currentStep === "preview"
+                  ? "bg-emerald-600 text-white font-bold"
+                  : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+              }`}
+            >
+              ২
+            </div>
+            <span>২. প্রিভিউ, এডিট ও প্রকাশ</span>
+            {currentStep === "preview" && (
+              <span className="px-1.5 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold animate-pulse">
+                যাচাই
+              </span>
+            )}
+          </button>
+        </div>
+
+        {currentStep === "preview" ? (
+          <ExamPreviewStep
+            title={title}
+            examTargetType={examTargetType}
+            selectedCourseId={selectedCourseId}
+            courseTitle={courses.find((c) => c.id === selectedCourseId)?.title}
+            category={category}
+            subject={subject}
+            syllabus={syllabus}
+            durationMinutes={durationMinutes}
+            totalMarks={totalMarks}
+            negativeMarking={negativeMarking}
+            status={status}
+            examQuestions={examQuestions}
+            isSaving={isSaving}
+            isEditMode={Boolean(examToEdit)}
+            onBackToForm={() => setCurrentStep("form")}
+            onPublish={(e) => handleSubmit(e)}
+            onUpdateQuestion={(updatedQ) => {
+              setExamQuestions((prev) =>
+                prev.map((q) => (q.id === updatedQ.id ? updatedQ : q))
+              );
+              showToast("প্রশ্ন সফলভাবে সংশোধন করা হয়েছে", "success");
+            }}
+            onRemoveQuestion={removeExamQuestion}
+            onMoveQuestion={handleMoveQuestion}
+            onClearAll={clearAllExamQuestions}
+          />
+        ) : (
+          <form onSubmit={handleProceedToPreview} className="space-y-4 text-xs">
+            {/* Section 1: Basic Exam Configurations */}
           <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/80 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-700 pb-2.5">
               <h4 className="font-bold text-slate-800 dark:text-white text-xs flex items-center gap-1.5">
@@ -1739,7 +1951,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
             )}
           </div>
 
-          {/* Action Footer */}
+          {/* Step 1 Action Footer */}
           <div className="flex items-center justify-between gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
             <div className="text-xs text-slate-500 dark:text-slate-400">
               মোট প্রশ্ন যুক্ত:{" "}
@@ -1752,21 +1964,21 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold cursor-pointer"
               >
                 বাতিল
               </button>
               <button
                 type="submit"
-                disabled={isSaving}
-                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold cursor-pointer shadow-md shadow-emerald-600/20 flex items-center gap-2"
+                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold cursor-pointer shadow-md shadow-emerald-600/25 flex items-center gap-2 transition-all transform active:scale-95"
               >
-                {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
-                <span>{examToEdit ? "মডেল টেস্ট আপডেট করুন" : "মডেল টেস্ট প্রকাশ করুন"}</span>
+                <span>নেক্সট (প্রিভিউ ও এডিট)</span>
+                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
         </form>
+        )}
       </div>
     </div>
   );
