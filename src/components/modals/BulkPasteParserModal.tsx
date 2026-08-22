@@ -22,6 +22,11 @@ import {
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import { Question } from "../../types";
+import {
+  detectQuestionLanguage,
+  getOptionLabel,
+  formatQuestionNumber,
+} from "../../lib/languageUtils";
 
 interface BulkPasteParserModalProps {
   isOpen: boolean;
@@ -803,14 +808,18 @@ export const BulkPasteParserModal: React.FC<BulkPasteParserModalProps> = ({
             {/* Questions List with Full Manual Editing on Every Card */}
             <div className="max-h-80 overflow-y-auto space-y-3 pr-1">
               {parsedQuestions.map((q, idx) => {
-                const optLabels = optionStyle === "ar" ? ["أ", "ب", "ج", "د", "هـ"] : optionStyle === "en" ? ["A", "B", "C", "D", "E"] : ["ক", "খ", "গ", "ঘ", "ঙ"];
+                const qLang = detectQuestionLanguage(q);
+                const isAr = qLang === "ar";
+                const optLabels = isAr ? ["أ", "ب", "ج", "د", "هـ"] : qLang === "en" ? ["A", "B", "C", "D", "E"] : ["ক", "খ", "গ", "ঘ", "ঙ"];
+
                 return (
                   <div
                     key={q.id || idx}
                     className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5 text-xs"
+                    dir={isAr ? "rtl" : "ltr"}
                   >
                     {/* Per-Card Subject & Topic Editing Bar */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-1.5 border-b border-slate-200/80 dark:border-slate-700">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-1.5 border-b border-slate-200/80 dark:border-slate-700" dir="ltr">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="w-5 h-5 rounded-md bg-emerald-600 text-white font-bold text-[10px] flex items-center justify-center">
                           {idx + 1}
@@ -839,6 +848,11 @@ export const BulkPasteParserModal: React.FC<BulkPasteParserModalProps> = ({
                             className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-300 w-32"
                           />
                         </div>
+
+                        {/* Language Tag */}
+                        <span className="px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                          {isAr ? "🇸🇦 عربي" : qLang === "en" ? "🇬🇧 English" : "🇧🇩 বাংলা"}
+                        </span>
                       </div>
 
                       <button
@@ -857,7 +871,9 @@ export const BulkPasteParserModal: React.FC<BulkPasteParserModalProps> = ({
                         rows={1}
                         value={q.question}
                         onChange={(e) => handleUpdateQuestionField(idx, "question", e.target.value)}
-                        className="w-full font-bold text-slate-900 dark:text-white bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs focus:ring-1 focus:ring-emerald-500 outline-none leading-relaxed"
+                        className={`w-full font-bold text-slate-900 dark:text-white bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs focus:ring-1 focus:ring-emerald-500 outline-none leading-relaxed ${
+                          isAr ? "font-arabic text-sm text-right" : "text-left"
+                        }`}
                         placeholder="মূল প্রশ্ন লিখুন..."
                       />
                       {q.arabic_text && (
@@ -873,38 +889,74 @@ export const BulkPasteParserModal: React.FC<BulkPasteParserModalProps> = ({
                     </div>
 
                     {/* Options Grid (All Options Editable) */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1" dir={isAr ? "rtl" : "ltr"}>
                       {q.options.map((opt, oIdx) => {
                         const isCorrect = q.correct_index === oIdx;
+                        const badge = optLabels[oIdx] || `${oIdx + 1}`;
+
                         return (
                           <div
                             key={oIdx}
                             onClick={() => handleUpdateCorrect(idx, oIdx)}
-                            className={`p-2 rounded-xl border text-xs flex items-center gap-2 cursor-pointer transition-all ${
+                            className={`p-2 rounded-xl border text-xs flex items-center justify-between gap-2 cursor-pointer transition-all ${
                               isCorrect
                                 ? "bg-emerald-100 dark:bg-emerald-950/80 border-emerald-500 font-bold text-emerald-950 dark:text-emerald-100 shadow-sm"
                                 : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-emerald-300"
                             }`}
                           >
-                            <span
-                              className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] flex-shrink-0 ${
-                                isCorrect
-                                  ? "bg-emerald-600 text-white"
-                                  : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
-                              }`}
-                            >
-                              {optLabels[oIdx]}
-                            </span>
-                            <input
-                              type="text"
-                              value={opt}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => handleUpdateOption(idx, oIdx, e.target.value)}
-                              placeholder={`বিকল্প ${optLabels[oIdx]}`}
-                              className="flex-1 bg-transparent border-none outline-none text-xs"
-                            />
-                            {isCorrect && (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                            {isAr ? (
+                              /* Arabic Option: Badge on Right, Input on Right */
+                              <>
+                                <div className="flex items-center gap-2 flex-1 min-w-0 justify-start">
+                                  <span
+                                    className={`w-6 h-6 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 border ${
+                                      isCorrect
+                                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                                        : "bg-blue-50 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border-blue-200"
+                                    }`}
+                                  >
+                                    {badge}
+                                  </span>
+                                  <input
+                                    type="text"
+                                    value={opt}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => handleUpdateOption(idx, oIdx, e.target.value)}
+                                    placeholder={`বিকল্প ${badge}`}
+                                    className="flex-1 bg-transparent border-none outline-none text-xs font-arabic text-right"
+                                    dir="rtl"
+                                  />
+                                </div>
+                                {isCorrect && (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                                )}
+                              </>
+                            ) : (
+                              /* Bengali/English Option: Badge on Left, Input on Left */
+                              <>
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                  <span
+                                    className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] flex-shrink-0 ${
+                                      isCorrect
+                                        ? "bg-emerald-600 text-white"
+                                        : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                                    }`}
+                                  >
+                                    {badge}
+                                  </span>
+                                  <input
+                                    type="text"
+                                    value={opt}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => handleUpdateOption(idx, oIdx, e.target.value)}
+                                    placeholder={`বিকল্প ${badge}`}
+                                    className="flex-1 bg-transparent border-none outline-none text-xs text-left"
+                                  />
+                                </div>
+                                {isCorrect && (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                                )}
+                              </>
                             )}
                           </div>
                         );
@@ -912,20 +964,24 @@ export const BulkPasteParserModal: React.FC<BulkPasteParserModalProps> = ({
                     </div>
 
                     {/* Explanation & Reference */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1" dir={isAr ? "rtl" : "ltr"}>
                       <input
                         type="text"
                         value={q.explanation || ""}
                         onChange={(e) => handleUpdateQuestionField(idx, "explanation", e.target.value)}
                         placeholder="ব্যাখ্যা (ঐচ্ছিক)..."
-                        className="w-full px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300"
+                        className={`w-full px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300 ${
+                          isAr ? "text-right font-arabic" : "text-left"
+                        }`}
                       />
                       <input
                         type="text"
                         value={q.source || ""}
                         onChange={(e) => handleUpdateQuestionField(idx, "source", e.target.value)}
                         placeholder="রেফারেন্স বা বই (ঐচ্ছিক)..."
-                        className="w-full px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300"
+                        className={`w-full px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300 ${
+                          isAr ? "text-right font-arabic" : "text-left"
+                        }`}
                       />
                     </div>
                   </div>

@@ -612,7 +612,7 @@ CREATE TABLE IF NOT EXISTS public.free_exams (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 5. Add 'free_exam_id' column to 'questions' table if missing
+-- 5. Add missing columns to 'questions' table if missing
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -620,6 +620,48 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'questions' AND column_name = 'free_exam_id'
   ) THEN
     ALTER TABLE public.questions ADD COLUMN free_exam_id UUID REFERENCES public.free_exams(id) ON DELETE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'questions' AND column_name = 'arabic_text'
+  ) THEN
+    ALTER TABLE public.questions ADD COLUMN arabic_text TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'questions' AND column_name = 'subject_name'
+  ) THEN
+    ALTER TABLE public.questions ADD COLUMN subject_name TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'questions' AND column_name = 'topic'
+  ) THEN
+    ALTER TABLE public.questions ADD COLUMN topic TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'questions' AND column_name = 'source'
+  ) THEN
+    ALTER TABLE public.questions ADD COLUMN source TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'questions' AND column_name = 'language'
+  ) THEN
+    ALTER TABLE public.questions ADD COLUMN language TEXT DEFAULT 'bn';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'questions' AND column_name = 'image_url'
+  ) THEN
+    ALTER TABLE public.questions ADD COLUMN image_url TEXT;
   END IF;
 END $$;
 

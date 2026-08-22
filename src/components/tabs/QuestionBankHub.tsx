@@ -436,31 +436,63 @@ export const QuestionBankHub: React.FC<QuestionBankHubProps> = ({
                       )}
 
                       {/* 4 Options Grid */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2" dir={qLang === "ar" ? "rtl" : "ltr"}>
                         {q.options.map((opt, optIdx) => {
                           const isCorrect = q.correct_index === optIdx;
                           const optionLabels = qLang === "ar" ? ["أ", "ب", "ج", "د"] : qLang === "en" ? ["A", "B", "C", "D"] : ["ক", "খ", "গ", "ঘ"];
+                          const badgeLabel = optionLabels[optIdx] || `${optIdx + 1}`;
+
                           return (
                             <div
                               key={optIdx}
-                              className={`p-3 rounded-xl border text-xs flex items-center gap-2.5 transition-all ${
+                              className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2.5 transition-all ${
                                 isCorrect
-                                  ? "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-900 dark:text-emerald-100 font-bold shadow-sm"
+                                  ? "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-900 dark:text-emerald-100 font-bold shadow-sm ring-1 ring-emerald-500/30"
                                   : "bg-slate-50 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
                               }`}
                             >
-                              <span
-                                className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[11px] flex-shrink-0 ${
-                                  isCorrect
-                                    ? "bg-emerald-600 text-white"
-                                    : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400"
-                                }`}
-                              >
-                                {optionLabels[optIdx]}
-                              </span>
-                              <span className={`truncate flex-1 ${qLang === "ar" ? "font-arabic text-sm" : ""}`} dir={qLang === "ar" ? "rtl" : "ltr"}>{opt}</span>
-                              {isCorrect && (
-                                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                              {qLang === "ar" ? (
+                                /* Arabic Layout: Badge on Right, Text on Right */
+                                <>
+                                  <div className="flex items-center gap-2.5 min-w-0 flex-1 justify-start">
+                                    <span
+                                      className={`w-6 h-6 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 border ${
+                                        isCorrect
+                                          ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                                          : "bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800"
+                                      }`}
+                                    >
+                                      {badgeLabel}
+                                    </span>
+                                    <span className={`font-arabic text-sm leading-relaxed text-right truncate ${isCorrect ? "font-bold text-emerald-950 dark:text-emerald-100" : "text-slate-800 dark:text-slate-200 font-medium"}`}>
+                                      {opt}
+                                    </span>
+                                  </div>
+                                  {isCorrect && (
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                                  )}
+                                </>
+                              ) : (
+                                /* Bengali/English Layout: Badge on Left, Text on Left */
+                                <>
+                                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                    <span
+                                      className={`w-5 h-5 rounded-md flex items-center justify-center font-bold text-[11px] flex-shrink-0 ${
+                                        isCorrect
+                                          ? "bg-emerald-600 text-white"
+                                          : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400"
+                                      }`}
+                                    >
+                                      {badgeLabel}
+                                    </span>
+                                    <span className={`truncate ${isCorrect ? "font-bold text-emerald-950 dark:text-emerald-100" : ""}`}>
+                                      {opt}
+                                    </span>
+                                  </div>
+                                  {isCorrect && (
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                                  )}
+                                </>
                               )}
                             </div>
                           );

@@ -1677,18 +1677,53 @@ export async function dbCreateQuestion(
 
     let { data, error } = await supabase.from("questions").upsert(payload).select().single();
 
-    // Handle column missing (42703) e.g., free_exam_id missing on older schema
-    if (error && (error.code === "42703" || error.message?.includes("does not exist"))) {
-      console.warn("⚠️ Column missing on questions table, retrying with fallback payload:", error.message);
+    // Handle column missing / schema cache missing (e.g. arabic_text, free_exam_id)
+    if (error && (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("schema cache") || error.message?.includes("column") || error.message?.includes("does not exist"))) {
+      console.warn("⚠️ Column missing in schema, attempting adaptive payload strip:", error.message);
+      let currentPayload = { ...payload };
+
+      if (error.message.includes("arabic_text")) {
+        // If question_text was empty or placeholder and arabic_text had the text, preserve it
+        if (!currentPayload.question_text || currentPayload.question_text.startsWith("প্রশ্ন")) {
+          currentPayload.question_text = currentPayload.arabic_text || currentPayload.question_text;
+        }
+        delete currentPayload.arabic_text;
+      }
       if (error.message.includes("free_exam_id")) {
-        const fallbackPayload = {
-          ...payload,
-          exam_id: targetFreeExamId || targetExamId,
+        if (!currentPayload.exam_id && targetFreeExamId) {
+          currentPayload.exam_id = targetFreeExamId;
+        }
+        delete currentPayload.free_exam_id;
+      }
+      if (error.message.includes("subject_name")) delete currentPayload.subject_name;
+      if (error.message.includes("topic")) delete currentPayload.topic;
+      if (error.message.includes("source")) delete currentPayload.source;
+      if (error.message.includes("language")) delete currentPayload.language;
+      if (error.message.includes("image_url")) delete currentPayload.image_url;
+
+      const retryRes = await supabase.from("questions").upsert(currentPayload).select().single();
+      data = retryRes.data;
+      error = retryRes.error;
+
+      // If still fails with missing column, retry with ultra-minimal core columns
+      if (error && (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("schema cache") || error.message?.includes("column"))) {
+        const corePayload: any = {
+          question_number: payload.question_number,
+          question_text: payload.question_text || payload.arabic_text || "প্রশ্ন",
+          option_a: payload.option_a,
+          option_b: payload.option_b,
+          option_c: payload.option_c,
+          option_d: payload.option_d,
+          correct_option: payload.correct_option,
+          explanation: payload.explanation,
+          marks: payload.marks,
+          negative_marks: payload.negative_marks,
+          sort_order: payload.sort_order,
         };
-        delete fallbackPayload.free_exam_id;
-        const retry = await supabase.from("questions").upsert(fallbackPayload).select().single();
-        data = retry.data;
-        error = retry.error;
+        if (payload.exam_id) corePayload.exam_id = payload.exam_id;
+        const minRetry = await supabase.from("questions").upsert(corePayload).select().single();
+        data = minRetry.data;
+        error = minRetry.error;
       }
     }
 
@@ -1697,10 +1732,14 @@ export async function dbCreateQuestion(
       console.warn("⚠️ Check constraint on correct_option, trying candidate formats:", error.message);
       const cIdx = getQuestionCorrectIndex(q);
       for (const format of CORRECT_OPTION_FORMAT_CANDIDATES) {
-        const altPayload = {
+        const altPayload: any = {
           ...payload,
           correct_option: format[cIdx] || format[0],
         };
+        // Clean out known missing columns if identified earlier
+        if (error.message?.includes("arabic_text")) delete altPayload.arabic_text;
+        if (error.message?.includes("free_exam_id")) delete altPayload.free_exam_id;
+
         const retryRes = await supabase.from("questions").upsert(altPayload).select().single();
         if (!retryRes.error && retryRes.data) {
           data = retryRes.data;
@@ -1839,12 +1878,59 @@ export async function dbCreateBulkQuestions(
       error = retryRes.error;
     }
 
-    // Missing column retry
-    if (error && (error.code === "42703" || error.message?.includes("free_exam_id") || error.message?.includes("does not exist"))) {
-      const fallbackPayloads = payloads.map(({ free_exam_id, ...rest }) => rest);
+    // Missing column or schema cache missing retry (e.g. arabic_text, free_exam_id, subject_name)
+    if (error && (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("schema cache") || error.message?.includes("column") || error.message?.includes("does not exist"))) {
+      console.warn("⚠️ Bulk Insert encountered missing column / schema cache issue. Retrying with adaptive column stripping:", error.message);
+      
+      const fallbackPayloads = payloads.map((p) => {
+        const item: any = { ...p };
+        if (error.message.includes("arabic_text") || error.message.includes("schema cache")) {
+          if (!item.question_text || item.question_text.startsWith("প্রশ্ন")) {
+            item.question_text = item.arabic_text || item.question_text;
+          }
+          delete item.arabic_text;
+        }
+        if (error.message.includes("free_exam_id")) {
+          if (!item.exam_id && item.free_exam_id) item.exam_id = item.free_exam_id;
+          delete item.free_exam_id;
+        }
+        if (error.message.includes("subject_name")) delete item.subject_name;
+        if (error.message.includes("topic")) delete item.topic;
+        if (error.message.includes("source")) delete item.source;
+        if (error.message.includes("language")) delete item.language;
+        if (error.message.includes("image_url")) delete item.image_url;
+        return item;
+      });
+
       const retryRes = await supabase.from("questions").upsert(fallbackPayloads).select();
       data = retryRes.data;
       error = retryRes.error;
+
+      // If still failing, strip ALL non-standard columns down to essential core
+      if (error && (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("schema cache") || error.message?.includes("column"))) {
+        console.warn("⚠️ Retrying bulk insert with absolute minimal columns...");
+        const minPayloads = payloads.map((p) => {
+          const core: any = {
+            question_number: p.question_number,
+            question_text: p.question_text || p.arabic_text || "প্রশ্ন",
+            option_a: p.option_a,
+            option_b: p.option_b,
+            option_c: p.option_c,
+            option_d: p.option_d,
+            correct_option: p.correct_option,
+            explanation: p.explanation,
+            marks: p.marks,
+            negative_marks: p.negative_marks,
+            sort_order: p.sort_order,
+          };
+          if (p.exam_id) core.exam_id = p.exam_id;
+          if (p.id) core.id = p.id;
+          return core;
+        });
+        const minRes = await supabase.from("questions").upsert(minPayloads).select();
+        data = minRes.data;
+        error = minRes.error;
+      }
     }
 
     if (error) {
@@ -2000,12 +2086,37 @@ export async function dbUpdateQuestion(
     if (q.image_url !== undefined) payload.image_url = q.image_url;
     if (q.sort_order !== undefined) payload.sort_order = Number(q.sort_order);
 
+    if (q.arabic_text !== undefined) payload.arabic_text = q.arabic_text ? q.arabic_text.trim() : null;
+    if (q.subject_id !== undefined) payload.subject_id = q.subject_id;
+    if (q.subject_name !== undefined) payload.subject_name = q.subject_name;
+    if (q.topic !== undefined) payload.topic = q.topic;
+    if (q.source !== undefined) payload.source = q.source;
+    if (q.language !== undefined) payload.language = q.language;
+    if (q.difficulty !== undefined) payload.difficulty = q.difficulty;
+    if (q.exam_type !== undefined) payload.exam_type = q.exam_type;
+
     let { data, error } = await supabase
       .from("questions")
       .update(payload)
       .eq("id", id)
       .select()
       .single();
+
+    // Column missing retry for update
+    if (error && (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("schema cache") || error.message?.includes("column") || error.message?.includes("does not exist"))) {
+      const cleanPayload = { ...payload };
+      if (error.message.includes("arabic_text") || error.message.includes("schema cache")) delete cleanPayload.arabic_text;
+      if (error.message.includes("free_exam_id")) delete cleanPayload.free_exam_id;
+      if (error.message.includes("subject_name")) delete cleanPayload.subject_name;
+      if (error.message.includes("topic")) delete cleanPayload.topic;
+      if (error.message.includes("source")) delete cleanPayload.source;
+      if (error.message.includes("language")) delete cleanPayload.language;
+      if (error.message.includes("image_url")) delete cleanPayload.image_url;
+
+      const retryRes = await supabase.from("questions").update(cleanPayload).eq("id", id).select().single();
+      data = retryRes.data;
+      error = retryRes.error;
+    }
 
     if (error && (error.code === "23514" || error.message.includes("check constraint") || error.message.includes("correct_option"))) {
       const cIdx = getQuestionCorrectIndex(q);

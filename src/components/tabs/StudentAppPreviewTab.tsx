@@ -20,6 +20,11 @@ import {
 } from "lucide-react";
 import { useAdminData } from "../../context/AdminDataContext";
 import { Exam, Question, SubscriptionPackage } from "../../types";
+import {
+  detectQuestionLanguage,
+  getOptionLabel,
+  formatQuestionNumber,
+} from "../../lib/languageUtils";
 
 interface StudentAppPreviewTabProps {
   initialExam?: Exam | null;
@@ -304,44 +309,100 @@ export const StudentAppPreviewTab: React.FC<StudentAppPreviewTabProps> = ({ init
                         </button>
                       </div>
                     ) : (
-                      (takingExam.questions || []).map((q, qIdx) => (
-                        <div key={q.id || `q-${qIdx}`} className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-2">
-                          <div className="flex items-start gap-2">
-                            <span className="text-xs font-bold text-emerald-700">{qIdx + 1}.</span>
-                            <h4 className="text-xs font-bold text-slate-900 leading-snug">{q.question || q.question_text || "প্রশ্ন"}</h4>
-                          </div>
+                      (takingExam.questions || []).map((q, qIdx) => {
+                        const qLang = detectQuestionLanguage(q);
+                        const isAr = qLang === "ar";
+                        const opts = q.options && q.options.length >= 2
+                          ? q.options
+                          : [q.option_a || "", q.option_b || "", q.option_c || "", q.option_d || ""].filter(Boolean);
 
-                          {q.arabic_text && (
-                            <div className="p-2 bg-emerald-50/50 rounded-xl font-arabic text-base text-emerald-950">
-                              {q.arabic_text}
+                        return (
+                          <div
+                            key={q.id || `q-${qIdx}`}
+                            className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-2.5"
+                            dir={isAr ? "rtl" : "ltr"}
+                          >
+                            {/* Question Title Bar */}
+                            <div className={`flex items-start gap-2 ${isAr ? "flex-row-reverse" : "flex-row"}`}>
+                              <span className="min-w-[22px] h-5.5 px-1.5 rounded-full bg-slate-900 text-white font-black text-[10px] flex items-center justify-center flex-shrink-0">
+                                {formatQuestionNumber(qIdx + 1, qLang)}
+                              </span>
+                              <h4
+                                className={`text-xs font-bold text-slate-900 leading-snug flex-1 ${
+                                  isAr ? "font-arabic text-sm text-right" : "text-left"
+                                }`}
+                              >
+                                {q.question || q.question_text || "প্রশ্ন"}
+                              </h4>
                             </div>
-                          )}
 
-                          <div className="space-y-1.5 pt-1">
-                            {(q.options || []).map((opt, optIdx) => {
-                              const isSelected = selectedAnswers[qIdx] === optIdx;
-                              return (
-                                <button
-                                  key={optIdx}
-                                  onClick={() => handleSelectOption(qIdx, optIdx)}
-                                  className={`w-full text-left p-2 rounded-xl text-xs flex items-center gap-2 border transition-colors ${
-                                    isSelected
-                                      ? "bg-emerald-600 text-white font-bold border-emerald-600"
-                                      : "bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100"
-                                  }`}
-                                >
-                                  <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] ${
-                                    isSelected ? "bg-white text-emerald-700 font-bold" : "bg-slate-200"
-                                  }`}>
-                                    {["ক", "খ", "গ", "ঘ"][optIdx] || optIdx + 1}
-                                  </span>
-                                  <span className="truncate">{opt}</span>
-                                </button>
-                              );
-                            })}
+                            {/* Arabic Verse / Ibarat if any */}
+                            {q.arabic_text && (
+                              <div
+                                className="p-2.5 bg-emerald-50/70 rounded-xl font-arabic text-sm text-emerald-950 font-semibold leading-loose text-right border border-emerald-200/60"
+                                dir="rtl"
+                              >
+                                {q.arabic_text}
+                              </div>
+                            )}
+
+                            {/* Options Grid */}
+                            <div className="space-y-2 pt-1">
+                              {opts.map((opt, optIdx) => {
+                                const isSelected = selectedAnswers[qIdx] === optIdx;
+                                const badgeLabel = getOptionLabel(optIdx, qLang);
+
+                                return (
+                                  <button
+                                    key={optIdx}
+                                    type="button"
+                                    onClick={() => handleSelectOption(qIdx, optIdx)}
+                                    className={`w-full p-2.5 rounded-xl text-xs flex items-center justify-between gap-2.5 border transition-all cursor-pointer ${
+                                      isSelected
+                                        ? "bg-emerald-600 text-white font-bold border-emerald-600 shadow-sm ring-1 ring-emerald-500/30"
+                                        : "bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100"
+                                    }`}
+                                  >
+                                    {isAr ? (
+                                      /* Arabic Option: Badge on the RIGHT, text on the RIGHT */
+                                      <div className="flex items-center gap-2.5 min-w-0 flex-1 justify-start">
+                                        <span
+                                          className={`w-6 h-6 rounded-lg flex items-center justify-center font-bold text-[11px] flex-shrink-0 border ${
+                                            isSelected
+                                              ? "bg-white text-emerald-700 border-white shadow-xs"
+                                              : "bg-blue-50 text-blue-800 border-blue-200"
+                                          }`}
+                                        >
+                                          {badgeLabel}
+                                        </span>
+                                        <span className={`font-arabic text-xs leading-relaxed text-right ${isSelected ? "text-white font-bold" : "text-slate-800 font-medium"}`}>
+                                          {opt}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      /* Bengali/English Option: Badge on the LEFT, text on the LEFT */
+                                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                        <span
+                                          className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${
+                                            isSelected ? "bg-white text-emerald-700" : "bg-slate-200 text-slate-700"
+                                          }`}
+                                        >
+                                          {badgeLabel}
+                                        </span>
+                                        <span className="text-left leading-relaxed truncate">{opt}</span>
+                                      </div>
+                                    )}
+
+                                    {isSelected && (
+                                      <span className="w-2 h-2 rounded-full bg-white flex-shrink-0" />
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
 
                     {(takingExam.questions || []).length > 0 && (

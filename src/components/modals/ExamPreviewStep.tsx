@@ -23,6 +23,13 @@ import {
   HelpCircle,
 } from "lucide-react";
 import { Question, QuestionDifficulty, ExamStatus, ExamCategory } from "../../types";
+import {
+  detectQuestionLanguage,
+  getOptionLabel,
+  formatQuestionNumber,
+  SupportedLanguage,
+  isArabicText,
+} from "../../lib/languageUtils";
 
 interface ExamPreviewStepProps {
   title: string;
@@ -384,98 +391,139 @@ export const ExamPreviewStep: React.FC<ExamPreviewStepProps> = ({
 
                   {/* Mode A: Normal Preview Display */}
                   {!isCurrentlyEditing ? (
-                    <div className="space-y-2.5">
-                      {/* Arabic Text if any */}
-                      {q.arabic_text && (
-                        <p
-                          className="font-arabic text-emerald-800 dark:text-emerald-300 text-sm font-semibold text-right leading-relaxed bg-emerald-50/50 dark:bg-emerald-950/30 p-2 rounded-xl"
-                          dir="rtl"
-                        >
-                          {q.arabic_text}
-                        </p>
-                      )}
+                    (() => {
+                      const qLang = detectQuestionLanguage(q);
+                      const isAr = qLang === "ar";
+                      const isEn = qLang === "en";
 
-                      {/* Bengali Question Text */}
-                      <p className="font-bold text-slate-900 dark:text-white text-xs sm:text-sm leading-snug">
-                        {q.question || q.question_text}
-                      </p>
+                      const optionsList =
+                        q.options && q.options.length >= 2
+                          ? q.options
+                          : [
+                              q.option_a || "",
+                              q.option_b || "",
+                              q.option_c || "",
+                              q.option_d || "",
+                            ];
 
-                      {/* 4 Options Grid with Correct Option Highlighted */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                        {["ক", "খ", "গ", "ঘ"].map((label, optIdx) => {
-                          const optionText =
-                            (q.options && q.options[optIdx]) ||
-                            (optIdx === 0
-                              ? q.option_a
-                              : optIdx === 1
-                              ? q.option_b
-                              : optIdx === 2
-                              ? q.option_c
-                              : q.option_d) ||
-                            "";
+                      const cIdx =
+                        q.correct_index !== undefined
+                          ? q.correct_index
+                          : q.correct_option === "option_b" || q.correct_option === "b" || q.correct_option === "B"
+                          ? 1
+                          : q.correct_option === "option_c" || q.correct_option === "c" || q.correct_option === "C"
+                          ? 2
+                          : q.correct_option === "option_d" || q.correct_option === "d" || q.correct_option === "D"
+                          ? 3
+                          : 0;
 
-                          const isCorrect =
-                            q.correct_index === optIdx ||
-                            (optIdx === 0 &&
-                              (q.correct_option === "option_a" ||
-                                q.correct_option === "a" ||
-                                q.correct_option === "A")) ||
-                            (optIdx === 1 &&
-                              (q.correct_option === "option_b" ||
-                                q.correct_option === "b" ||
-                                q.correct_option === "B")) ||
-                            (optIdx === 2 &&
-                              (q.correct_option === "option_c" ||
-                                q.correct_option === "c" ||
-                                q.correct_option === "C")) ||
-                            (optIdx === 3 &&
-                              (q.correct_option === "option_d" ||
-                                q.correct_option === "d" ||
-                                q.correct_option === "D"));
-
-                          return (
-                            <div
-                              key={optIdx}
-                              className={`p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 text-xs ${
-                                isCorrect
-                                  ? "bg-emerald-500/15 border-emerald-500 text-emerald-900 dark:text-emerald-200 font-bold shadow-xs ring-1 ring-emerald-500/30"
-                                  : "bg-slate-50/80 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
-                              }`}
+                      return (
+                        <div className="space-y-3" dir={isAr ? "rtl" : "ltr"}>
+                          {/* Arabic Text if any */}
+                          {q.arabic_text && (
+                            <p
+                              className="font-arabic text-emerald-900 dark:text-emerald-300 text-base font-semibold text-right leading-loose bg-emerald-50/70 dark:bg-emerald-950/40 p-2.5 rounded-xl border border-emerald-200/60 dark:border-emerald-900/60"
+                              dir="rtl"
                             >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span
-                                  className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] flex-shrink-0 ${
+                              {q.arabic_text}
+                            </p>
+                          )}
+
+                          {/* Main Question Text */}
+                          <h3
+                            className={`font-bold text-slate-900 dark:text-white leading-relaxed ${
+                              isAr
+                                ? "font-arabic text-base sm:text-lg text-right"
+                                : "text-xs sm:text-sm text-left"
+                            }`}
+                          >
+                            {q.question || q.question_text}
+                          </h3>
+
+                          {/* 4 Options Grid with Correct Option Highlighted */}
+                          <div className="grid grid-cols-1 gap-2 pt-1">
+                            {optionsList.slice(0, 4).map((optionText, optIdx) => {
+                              const isCorrect = cIdx === optIdx;
+                              const badgeLabel = getOptionLabel(optIdx, qLang);
+
+                              return (
+                                <div
+                                  key={optIdx}
+                                  className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 text-xs sm:text-sm ${
                                     isCorrect
-                                      ? "bg-emerald-600 text-white"
-                                      : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
+                                      ? "bg-emerald-500/15 dark:bg-emerald-950/60 border-emerald-500 text-emerald-950 dark:text-emerald-100 font-bold shadow-xs ring-1 ring-emerald-500/30"
+                                      : "bg-slate-50/80 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700/80 text-slate-700 dark:text-slate-300"
                                   }`}
                                 >
-                                  {label}
-                                </span>
-                                <span className="truncate">{optionText}</span>
-                              </div>
+                                  {isAr ? (
+                                    /* Arabic Option Row: Badge on the RIGHT, text on the RIGHT */
+                                    <>
+                                      <div className="flex items-center gap-3 min-w-0 flex-1 justify-start">
+                                        <span
+                                          className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center font-bold text-xs sm:text-sm flex-shrink-0 border ${
+                                            isCorrect
+                                              ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                                              : "bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-200/80 dark:border-blue-800"
+                                          }`}
+                                        >
+                                          {badgeLabel}
+                                        </span>
+                                        <span className={`font-arabic text-sm sm:text-base leading-relaxed text-right ${isCorrect ? "font-bold text-emerald-950 dark:text-emerald-100" : "font-medium text-slate-800 dark:text-slate-200"}`}>
+                                          {optionText}
+                                        </span>
+                                      </div>
 
-                              {isCorrect && (
-                                <span className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-black text-[10px] flex items-center gap-0.5 flex-shrink-0">
-                                  <Check className="w-3 h-3" />
-                                  <span>সঠিক উত্তর</span>
-                                </span>
-                              )}
+                                      {isCorrect && (
+                                        <span className="px-2 py-0.5 rounded bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1 flex-shrink-0" dir="ltr">
+                                          <Check className="w-3.5 h-3.5" />
+                                          <span>صحيح</span>
+                                        </span>
+                                      )}
+                                    </>
+                                  ) : (
+                                    /* Bengali / English Row: Badge on the LEFT, text on the LEFT */
+                                    <>
+                                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                                        <span
+                                          className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 border ${
+                                            isCorrect
+                                              ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                                              : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600"
+                                          }`}
+                                        >
+                                          {badgeLabel}
+                                        </span>
+                                        <span className={`text-left leading-relaxed ${isCorrect ? "font-bold text-emerald-950 dark:text-emerald-100" : "text-slate-800 dark:text-slate-200"}`}>
+                                          {optionText}
+                                        </span>
+                                      </div>
+
+                                      {isCorrect && (
+                                        <span className="px-2 py-0.5 rounded bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1 flex-shrink-0">
+                                          <Check className="w-3.5 h-3.5" />
+                                          <span>সঠিক উত্তর</span>
+                                        </span>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Explanation box if any */}
+                          {q.explanation && (
+                            <div className={`p-2.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900/60 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-1.5 ${isAr ? "text-right" : "text-left"}`}>
+                              <BookOpen className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                              <p>
+                                <strong>{isAr ? "الشرح: " : "ব্যাখ্যা: "}</strong>{" "}
+                                <span className={isAr ? "font-arabic" : ""}>{q.explanation}</span>
+                              </p>
                             </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Explanation box if any */}
-                      {q.explanation && (
-                        <div className="p-2 rounded-xl bg-blue-50/70 dark:bg-slate-800 border border-blue-200/70 dark:border-slate-700 text-[11px] text-blue-900 dark:text-blue-300 flex items-start gap-1.5">
-                          <BookOpen className="w-3.5 h-3.5 text-blue-600 flex-shrink-0 mt-0.5" />
-                          <p>
-                            <strong>ব্যাখ্যা:</strong> {q.explanation}
-                          </p>
+                          )}
                         </div>
-                      )}
-                    </div>
+                      );
+                    })()
                   ) : (
                     /* Mode B: Live Inline Question Editor */
                     <div className="space-y-3 pt-1 animate-in fade-in">
