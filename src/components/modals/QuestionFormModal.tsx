@@ -297,7 +297,7 @@ export const QuestionFormModal: React.FC<QuestionFormModalProps> = ({
             ? "المناهج المعتمدة"
             : language === "en"
             ? "Curriculum Reference"
-            : "মাদ্রাসা পাঠ্যবই ও রেফারেন্স"),
+            : "পাঠ্যবই ও রেফারেন্স"),
         difficulty,
         exam_type: examType,
         language,

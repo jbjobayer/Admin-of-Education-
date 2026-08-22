@@ -288,7 +288,7 @@ CREATE TABLE IF NOT EXISTS public.free_exams (
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   -- Model Test details
-  subject TEXT DEFAULT 'সাধারণ ও মাদ্রাসা কারিকুলাম',
+  subject TEXT DEFAULT '',
   exam_type TEXT NOT NULL DEFAULT 'model_test' CHECK (exam_type IN ('model_test', 'daily_test', 'chapter_test', 'full_test', 'live_exam')),
   total_questions INT NOT NULL DEFAULT 0,
   negative_mark NUMERIC NOT NULL DEFAULT 0.25,
@@ -600,7 +600,7 @@ CREATE TABLE IF NOT EXISTS public.free_exams (
   duration_minutes INT NOT NULL DEFAULT 30,
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
-  subject TEXT DEFAULT 'সাধারণ ও মাদ্রাসা কারিকুলাম',
+  subject TEXT DEFAULT '',
   exam_type TEXT NOT NULL DEFAULT 'model_test',
   total_questions INT NOT NULL DEFAULT 0,
   negative_mark NUMERIC NOT NULL DEFAULT 0.25,

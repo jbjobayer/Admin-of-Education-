@@ -75,7 +75,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
   const [title, setTitle] = useState("");
   const [selectedCourseId, setSelectedCourseId] = useState<string>("");
   const [category, setCategory] = useState<ExamCategory>("daily_live");
-  const [subject, setSubject] = useState("নাহু ও সরফ");
+  const [subject, setSubject] = useState("");
   const [syllabus, setSyllabus] = useState("");
   const [durationMinutes, setDurationMinutes] = useState(20);
   const [totalMarks, setTotalMarks] = useState(20);
@@ -169,7 +169,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       setExamTargetType(hasCourse ? "course_exam" : "free_exam");
       setSelectedCourseId(examToEdit.course_id || initialCourseId || "");
       setCategory(examToEdit.category || (hasCourse ? "daily_live" : "free_test"));
-      setSubject(examToEdit.subject || "নাহু ও সরফ");
+      setSubject(examToEdit.subject || "");
       setSyllabus(examToEdit.syllabus || "");
       setDurationMinutes(examToEdit.duration_minutes || 20);
       setTotalMarks(examToEdit.total_marks || 20);
@@ -194,16 +194,16 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
         }
       }
 
-      setManualSubject(examToEdit.subject || "নাহু ও সরফ");
-      setPasteSubject(examToEdit.subject || "নাহু ও সরফ");
-      setAiSubject(examToEdit.subject || "নাহু ও সরফ");
+      setManualSubject(examToEdit.subject || "");
+      setPasteSubject(examToEdit.subject || "");
+      setAiSubject(examToEdit.subject || "");
     } else {
       setTitle("");
       const isInitialCourse = Boolean(initialCourseId);
       setExamTargetType(isInitialCourse ? "course_exam" : "free_exam");
       setSelectedCourseId(initialCourseId || "");
       setCategory(isInitialCourse ? "daily_live" : "free_test");
-      setSubject("নাহু ও সরফ");
+      setSubject("");
       setSyllabus("");
       setDurationMinutes(20);
       setTotalMarks(20);
@@ -212,9 +212,9 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       // Default to first 5 questions if available
       setExamQuestions(questions.slice(0, 5));
 
-      setManualSubject("নাহু ও সরফ");
-      setPasteSubject("নাহু ও সরফ");
-      setAiSubject("নাহু ও সরফ");
+      setManualSubject("");
+      setPasteSubject("");
+      setAiSubject("");
     }
     setCurrentStep("form");
     setEditingQuestionId(null);
@@ -223,9 +223,9 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
   // Sync subject field changes to sub-tabs
   const handleExamSubjectChange = (newSub: string) => {
     setSubject(newSub);
-    if (!manualSubject || manualSubject === subject) setManualSubject(newSub);
-    if (!pasteSubject || pasteSubject === subject) setPasteSubject(newSub);
-    if (!aiSubject || aiSubject === subject) setAiSubject(newSub);
+    setManualSubject(newSub);
+    setPasteSubject(newSub);
+    setAiSubject(newSub);
   };
 
   // ----------------------------------------------------
@@ -422,8 +422,8 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
       return;
     }
 
-    const effectiveSub = manualSubject.trim() || subject || "সাধারণ বিষয়";
-    const effectiveTopic = manualTopic.trim() || syllabus || "সাধারণ";
+    const effectiveSub = manualSubject.trim() || subject.trim() || "";
+    const effectiveTopic = manualTopic.trim() || syllabus.trim() || "সাধারণ";
 
     const matchedSub = subjects.find(
       (s) =>
@@ -451,7 +451,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
         manualCorrectIndex
       ],
       explanation: manualExplanation.trim(),
-      source: manualSource.trim() || "মাদ্রাসা পাঠ্যবই",
+      source: manualSource.trim() || "পাঠ্যবই ও রেফারেন্স",
       difficulty: manualDifficulty,
       exam_type: manualExamType,
       created_at: new Date().toISOString(),
@@ -486,7 +486,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
     }
 
     setIsParsingPaste(true);
-    const effSub = pasteSubject.trim() || subject || "সাধারণ বিষয়";
+    const effSub = pasteSubject.trim() || subject.trim() || "";
     const effTopic = pasteTopic.trim() || "সাধারণ";
 
     try {
@@ -530,7 +530,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
               "option_d",
             ][q.correct_index || 0],
             explanation: q.explanation || "",
-            source: q.source || "মাদ্রাসা পাঠ্যবই",
+            source: q.source || "পাঠ্যবই ও রেফারেন্স",
             difficulty: "Medium",
             exam_type: "NTRCA",
             created_at: new Date().toISOString(),
@@ -626,8 +626,8 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
     e.preventDefault();
     setIsGeneratingAi(true);
 
-    const effSub = aiSubject.trim() || subject || "সাধারণ বিষয়";
-    const effTopic = aiTopic.trim() || syllabus || "সাধারণ প্রস্তুতি";
+    const effSub = aiSubject.trim() || subject.trim() || "";
+    const effTopic = aiTopic.trim() || syllabus.trim() || "সাধারণ প্রস্তুতি";
 
     try {
       const response = await fetch("/api/gemini/generate-questions", {
@@ -674,7 +674,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
               "option_d",
             ][q.correct_index || 0],
             explanation: q.explanation || "",
-            source: q.source || "Gemini AI কারিকুলাম রেফারেন্স",
+            source: q.source || "Gemini AI রেফারেন্স",
             difficulty: q.difficulty || aiDifficulty,
             exam_type: q.exam_type || aiExamType,
             language: aiLanguage,
@@ -710,8 +710,8 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
             "বিকল্প ঘ",
           ],
           correct_index: 0,
-          explanation: "এটি প্রমিত মাদ্রাসা কারিকুলাম অনুযায়ী সঠিক উত্তর।",
-          source: "আল-হেদায়া ও প্রমিত ফতোয়া সংকলন",
+          explanation: "এটি প্রমিত রেফারেন্স অনুযায়ী সঠিক উত্তর।",
+          source: "প্রমিত রেফারেন্স সংকলন",
           difficulty: aiDifficulty,
           exam_type: aiExamType,
           language: aiLanguage,
@@ -1105,7 +1105,7 @@ export const ExamFormModal: React.FC<ExamFormModalProps> = ({
                   type="text"
                   value={subject}
                   onChange={(e) => handleExamSubjectChange(e.target.value)}
-                  placeholder="যেমন: আরবি সাহিত্য ও ব্যাকরণ"
+                  placeholder="যেমন: বাংলা / ইংরেজি / সাধারণ জ্ঞান / গণিত"
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
                 />
               </div>

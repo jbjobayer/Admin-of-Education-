@@ -140,8 +140,8 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
           ? "هذا الحكم مستنبط ومبني على القواعد المعتمدة في أمهات كتب النحو والفقه."
           : isEnglish
           ? "This rule follows standard grammatical agreements in competitive examinations."
-          : "এটি প্রমিত ইসলামিক পাঠ্যবই এবং মাদ্রাসা কারিকুলাম অনুসারে সঠিক সমাধান।",
-        source: isArabic ? "شرح ابن عقيل / صحيح البخاري" : isEnglish ? "Oxford English Grammar" : "আল-হেদায়া ও প্রমিত ফতোয়া সংকলন",
+          : "এটি প্রমিত পাঠ্যবই এবং সিলেবাস অনুসারে সঠিক সমাধান।",
+        source: isArabic ? "شرح ابن عقيل / صحيح البخاري" : isEnglish ? "Standard Academic Reference" : "প্রমিত পাঠ্যবই ও রেফারেন্স সংকলন",
         difficulty,
         exam_type: examType,
         language,
@@ -239,7 +239,7 @@ export const AiQuestionGeneratorModal: React.FC<AiQuestionGeneratorModalProps> =
         correct_index: q.correct_index,
         correct_option: ["option_a", "option_b", "option_c", "option_d"][q.correct_index] || "option_a",
         explanation: q.explanation || "",
-        source: q.source || (language === "ar" ? "المناهج المعتمدة" : language === "en" ? "Curriculum Reference" : "মাদ্রাসা পাঠ্যবই"),
+        source: q.source || (language === "ar" ? "المناهج المعتمدة" : language === "en" ? "Curriculum Reference" : "পাঠ্যবই ও রেফারেন্স"),
         difficulty: q.difficulty || difficulty,
         exam_type: q.exam_type || examType,
         language: q.language || language,
